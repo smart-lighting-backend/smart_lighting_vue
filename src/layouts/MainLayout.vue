@@ -421,7 +421,7 @@ onMounted(async () => {
   padding: 10px 12px;
   border-radius: 8px;
   cursor: pointer;
-  color: rgba(140, 190, 220, 0.7);
+  color: rgba(170, 210, 235, 0.82);
   text-decoration: none;
   font-size: clamp(13px, calc(13px * var(--scale-ratio, 1)), 15px);
   transition: all 0.2s ease;
@@ -430,12 +430,13 @@ onMounted(async () => {
 }
 .nav-item:hover {
   background: rgba(0, 120, 200, 0.12);
-  color: rgba(180, 220, 240, 0.9);
+  color: rgba(200, 230, 245, 0.95);
 }
 .nav-item.active {
   background: rgba(0, 150, 220, 0.18);
   color: #4dd0e1;
   border: 1px solid rgba(77, 208, 225, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(77, 208, 225, 0.15);
 }
 .nav-item.active::before {
   content: '';

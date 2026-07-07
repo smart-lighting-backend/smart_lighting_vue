@@ -85,6 +85,8 @@ function makeCoordRule(field) {
   ]
 }
 
+const DEVICE_ID_PATTERN = /^[a-zA-Z0-9_]+$/
+
 const createRules = {
   deviceId: [{ required: true, message: '请输入设备编号', trigger: 'blur' }],
   status: [{ required: true, message: '请选择设备状态', trigger: 'change' }],
@@ -112,6 +114,7 @@ function buildCreateForm() {
     deviceId: '',
     name: '',
     area: '',
+    areaId: null,
     longitude: '',
     latitude: '',
     status: 1,
@@ -148,6 +151,12 @@ onMounted(() => {
     interval: 60000,
     isSensitive: () => createDialogVisible.value || deletingDeviceId.value || togglingDeviceId.value || areaBindingDialogVisible.value || areaUnbindingDeviceId.value,
   })
+})
+
+// 所选区域变化时同步 area 文本
+watch(() => createForm.value?.areaId, (id) => {
+  if (!createForm.value) return
+  createForm.value.area = id ? getAreaPathById(id) : ''
 })
 
 const filtered = computed(() => {
@@ -216,6 +225,7 @@ function openCreateDialog() {
   createDialogMode.value = 'create'
   editingDeviceId.value = ''
   createForm.value = buildCreateForm()
+  ensureAreaTreeLoaded()
   createDialogVisible.value = true
 }
 
@@ -227,6 +237,7 @@ function openEditDialog(device) {
     deviceId: device.deviceId || '',
     name: device.name || '',
     area: device.area || '',
+    areaId: findAreaIdByName(device.area) ?? null,
     longitude: locParts[0] || '',
     latitude: locParts[1] || '',
     status: displayStatus(device) ?? 1,
@@ -234,6 +245,7 @@ function openEditDialog(device) {
     topicPrefix: device.topicPrefix || 'streetlight',
     enabled: device.enabled !== false,
   }
+  ensureAreaTreeLoaded()
   createDialogVisible.value = true
 }
 
@@ -279,8 +291,25 @@ function upsertCreatedDevice(device) {
   devices.value.splice(idx, 1, { ...devices.value[idx], ...device })
 }
 
+let _lastWarnedCode = ''
+function onDeviceIdBlur() {
+  const code = createForm.value.deviceId?.trim()
+  if (code && !DEVICE_ID_PATTERN.test(code) && code !== _lastWarnedCode) {
+    _lastWarnedCode = code
+    ElMessage.warning('设备编号只能包含字母、数字和下划线')
+  }
+}
+
 async function submitCreateDevice() {
   if (!createFormRef.value) return
+
+  // 设备编号格式校验
+  const code = createForm.value.deviceId?.trim()
+  if (code && !DEVICE_ID_PATTERN.test(code)) {
+    ElMessage.warning('设备编号只能包含字母、数字和下划线')
+    return
+  }
+
   const valid = await createFormRef.value.validate().catch(() => false)
   if (!valid) return
 
@@ -429,6 +458,22 @@ function findAreaOptionById(options, areaId) {
 
 function getAreaPathById(areaId) {
   return findAreaOptionById(areaTreeOptions.value, areaId)?.areaPath || ''
+}
+
+/** 根据区域名称在区域树中查找对应的 ID（首条匹配） */
+function findAreaIdByName(areaName) {
+  if (!areaName) return null
+  function search(options) {
+    for (const opt of options || []) {
+      if (opt.label === areaName || opt.areaPath === areaName) return opt.value
+      if (opt.children?.length) {
+        const found = search(opt.children)
+        if (found != null) return found
+      }
+    }
+    return null
+  }
+  return search(areaTreeOptions.value)
 }
 
 function getDeviceDbId(device) {
@@ -832,13 +877,23 @@ async function batchClearArea() {
             placeholder="如 SL-007"
             maxlength="50"
             show-word-limit
+            @blur="onDeviceIdBlur"
           />
         </ElFormItem>
         <ElFormItem label="设备名称" prop="name">
           <ElInput v-model.trim="createForm.name" placeholder="如 北门-01" />
         </ElFormItem>
         <ElFormItem label="所属区域" prop="area">
-          <ElInput v-model.trim="createForm.area" placeholder="如 A区" />
+          <ElCascader
+            v-model="createForm.areaId"
+            :options="areaTreeOptions"
+            :props="{ emitPath: false, checkStrictly: true, expandTrigger: 'hover' }"
+            clearable
+            filterable
+            placeholder="选择区域（空置为暂不绑定）"
+            style="width: 100%"
+          />
+          <span class="area-hint" v-if="!createForm.areaId">暂不绑定区域</span>
         </ElFormItem>
         <ElFormItem label="经度" prop="longitude">
           <div style="display:flex;gap:8px;align-items:center">
@@ -1302,4 +1357,12 @@ async function batchClearArea() {
 .batch-area-hint { font-size: 12px; color: #40566f; margin-top: 12px; }
 .batch-area-dialog :deep(.el-cascader__wrapper) { background: rgba(255,255,255,0.92); }
 .batch-area-dialog :deep(.el-cascader__search-input) { color: #0d1b2d; }
+
+.device-create-form .area-hint {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #60748a;
+  font-style: italic;
+}
 </style>

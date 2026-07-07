@@ -77,6 +77,8 @@ export function validateDeviceRow(row, existingDeviceIds = new Set()) {
     errors.push('设备编号不能为空')
   } else if (row.deviceId.length > 50) {
     errors.push('设备编号不能超过50个字符')
+  } else if (!/^[a-zA-Z0-9_]+$/.test(row.deviceId)) {
+    errors.push('设备编号只能包含字母、数字和下划线')
   } else if (existingDeviceIds.has(row.deviceId)) {
     errors.push(`设备编号 "${row.deviceId}" 已存在`)
   }
