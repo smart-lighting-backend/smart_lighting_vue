@@ -1,4 +1,4 @@
-<script setup>import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue';
+<script setup>import { ref, onMounted, onBeforeUnmount, onActivated, onDeactivated, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElButton, ElCard, ElTag, ElRadioGroup, ElRadioButton, ElRow, ElCol, ElSlider, ElTable, ElTableColumn, ElMessage, ElMessageBox } from 'element-plus';
 import { ArrowLeft, Lightning, Sunny, Moon, Refresh, Warning } from '@element-plus/icons-vue';
@@ -653,6 +653,14 @@ watch(() => route.params.id, async (newId) => {
     setTimeout(() => initChart(), 100);
   }
 });
+
+onActivated(() => {
+  handleResize()
+})
+
+onDeactivated(() => {
+  // KeepAlive 缓存时不做销毁，保留 chart 实例
+})
 
 onBeforeUnmount(() => {
  if (resizeTimer) {

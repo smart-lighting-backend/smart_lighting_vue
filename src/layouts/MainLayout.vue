@@ -336,7 +336,13 @@ onMounted(async () => {
       </header>
 
       <main class="page-content">
-        <RouterView />
+        <RouterView v-slot="{ Component }">
+          <Transition name="fade-page" mode="out-in">
+            <KeepAlive :max="8">
+              <component :is="Component" />
+            </KeepAlive>
+          </Transition>
+        </RouterView>
       </main>
     </div>
 
@@ -634,5 +640,17 @@ onMounted(async () => {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+}
+</style>
+
+<style>
+/* 路由切换过渡动画 */
+.fade-page-enter-active,
+.fade-page-leave-active {
+  transition: opacity 0.18s ease;
+}
+.fade-page-enter-from,
+.fade-page-leave-to {
+  opacity: 0;
 }
 </style>

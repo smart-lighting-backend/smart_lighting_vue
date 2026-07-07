@@ -6,18 +6,20 @@
  *
  * 特性:
  *   - 页面隐藏时自动暂停，恢复可见时立刻拉取一次
+ *   - KeepAlive 缓存时暂停（onDeactivated），激活时恢复（onActivated）
  *   - 传入 isSensitive 回调可在敏感操作（如下拉框展开）时跳过当次刷新
- *   - onUnmounted 自动清理定时器
+ *   - onUnmounted 自动清理定时器和事件监听
  */
-import { onUnmounted, ref } from 'vue'
+import { onUnmounted, onActivated, onDeactivated, ref } from 'vue'
 
 export function useAutoRefresh(fn, { interval = 30000, immediateFirst = false, isSensitive } = {}) {
   let timer = null
   let lastRun = 0
   const paused = ref(false)
+  let deactivated = false
 
   function run() {
-    if (paused.value) return
+    if (paused.value || deactivated) return
     if (typeof isSensitive === 'function' && isSensitive()) return
     lastRun = Date.now()
     fn()
@@ -42,7 +44,6 @@ export function useAutoRefresh(fn, { interval = 30000, immediateFirst = false, i
 
   function resume() {
     paused.value = false
-    // 恢复时立刻拉取一次，然后重新开始定时
     run()
     schedule()
   }
@@ -54,10 +55,10 @@ export function useAutoRefresh(fn, { interval = 30000, immediateFirst = false, i
     }
   }
 
-  // 页面可见性变化
+  // ── 浏览器 Tab 可见性 ──
   function onVisibilityChange() {
+    if (deactivated) return
     if (document.visibilityState === 'visible') {
-      // 恢复时若距离上次拉取已超 interval，立刻刷新
       if (!lastRun || Date.now() - lastRun > (typeof interval === 'function' ? interval() : interval)) {
         run()
       }
@@ -69,6 +70,21 @@ export function useAutoRefresh(fn, { interval = 30000, immediateFirst = false, i
 
   document.addEventListener('visibilitychange', onVisibilityChange)
 
+  // ── KeepAlive 缓存/激活 ──
+  onDeactivated(() => {
+    deactivated = true
+    stop()
+  })
+
+  onActivated(() => {
+    deactivated = false
+    if (!lastRun || Date.now() - lastRun > (typeof interval === 'function' ? interval() : interval)) {
+      run()
+    }
+    schedule()
+  })
+
+  // ── 组件销毁 ──
   onUnmounted(() => {
     stop()
     document.removeEventListener('visibilitychange', onVisibilityChange)
