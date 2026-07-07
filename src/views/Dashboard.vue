@@ -1,9 +1,10 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { fetchDashboardStats, fetchEnergyTrend, fetchDistrictData, fetchEdgeStatus, triggerEdgeSimulation, fetchEdgeRecent, triggerEnergyCalc, genTestData } from '../api/dashboard.js'
 import { fetchAllDevicesForMap } from '../api/devices.js'
 import { useChartScale } from '../composables/useChartScale.js'
 import { useAutoRefresh } from '../composables/useAutoRefresh.js'
+import { withCache, invalidateCache } from '../utils/requestCache.js'
 import DeviceMap from '../components/DeviceMap.vue'
 import * as echarts from 'echarts'
 
@@ -76,6 +77,22 @@ function setupSectionObserver() {
   })
 }
 
+// ── 软刷新（替代 location.reload，避免整页重载） ──
+async function softRefreshAll() {
+  try {
+    invalidateCache('dashboard:')
+    invalidateCache('energy:')
+    const [s, t, d] = await Promise.all([
+      fetchDashboardStats(), fetchEnergyTrend(), fetchDistrictData(),
+    ])
+    stats.value = s.data || {}
+    districts.value = d.data || {}
+    refreshEdgeStatus()
+    const td = t.data || {}
+    initChart(td)
+  } catch {}
+}
+
 // ── 能耗相关 ──
 async function handleCalcEnergy() {
   if (calcLoading.value) return
@@ -83,7 +100,7 @@ async function handleCalcEnergy() {
   try {
     await triggerEnergyCalc()
     alert('当日能耗计算完成')
-    window.location.reload()
+    await softRefreshAll()
   } catch (e) {
     alert('计算失败: ' + (e.response?.data?.msg || e.message))
   } finally { calcLoading.value = false }
@@ -95,7 +112,7 @@ async function handleGenData() {
   try {
     await genTestData(10)
     alert('历史测试数据生成完成（过去10天）')
-    window.location.reload()
+    await softRefreshAll()
   } catch (e) {
     alert('生成失败: ' + (e.response?.data?.msg || e.message))
   } finally { genLoading.value = false }
@@ -163,12 +180,13 @@ function initChart(data) {
 
 onMounted(async () => {
   try {
-    const [s, t, d, e] = await Promise.all([
-      fetchDashboardStats(), fetchEnergyTrend(), fetchDistrictData(), fetchEdgeStatus(),
+    const [s, t, d] = await Promise.all([
+      withCache(() => fetchDashboardStats(), 'dashboard:stats', { ttl: 30000 }),
+      withCache(() => fetchEnergyTrend(),   'dashboard:trend', { ttl: 30000 }),
+      withCache(() => fetchDistrictData(),  'dashboard:districts', { ttl: 30000 }),
     ])
     stats.value = s.data || {}
-    districts.value = d.data || []
-    edgeStatus.value = e.data || {}
+    districts.value = d.data || {}
     refreshEdgeStatus()
     fetchAllDevicesForMap().then(list => {
       allDevices.value = Array.isArray(list) ? list : (list?.records || [])
@@ -187,6 +205,15 @@ onMounted(async () => {
   } catch (e) {
     console.error('[Dashboard] onMounted ERROR:', e.message, e.stack)
   }
+})
+
+onActivated(() => {
+  handleChartResize()
+  setupSectionObserver()
+})
+
+onDeactivated(() => {
+  sectionObserver?.disconnect()
 })
 
 onUnmounted(() => {
