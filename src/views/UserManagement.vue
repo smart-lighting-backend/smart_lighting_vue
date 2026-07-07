@@ -277,6 +277,18 @@ onMounted(() => {
 
     <div class="user-content" v-loading="loading">
       <ElTable :data="userList" border stripe style="width: 100%" @sort-change="() => {}">
+        <template #empty>
+          <div class="empty-illust">
+            <svg viewBox="0 0 120 80" fill="none" width="100" height="66">
+              <rect x="25" y="12" width="70" height="56" rx="6" stroke="#b0cadd" stroke-width="1" fill="rgba(176,202,221,0.05)"/>
+              <circle cx="60" cy="30" r="8" stroke="#b0cadd" stroke-width="1" fill="rgba(176,202,221,0.08)"/>
+              <path d="M55-41l4 4-6 6" stroke="#b0cadd" stroke-width="0.8" stroke-linecap="round"/>
+              <rect x="46" y="44" width="28" height="14" rx="7" stroke="#b0cadd" stroke-width="1" fill="rgba(176,202,221,0.06)"/>
+              <path d="M34 18l-8-4M86 18l8-4M30 66l-6 4M90 66l6 4" stroke="#b0cadd" stroke-width="0.6" stroke-linecap="round" opacity="0.4"/>
+            </svg>
+            <p>暂无用户数据</p>
+          </div>
+        </template>
         <ElTableColumn prop="displayId" label="ID" width="80" sortable="custom" />
         <ElTableColumn prop="username" label="用户名" min-width="120" sortable="custom" show-overflow-tooltip />
         <ElTableColumn prop="realName" label="真实姓名" min-width="100" sortable="custom" show-overflow-tooltip />
@@ -515,6 +527,14 @@ onMounted(() => {
 
 :deep(.el-button.is-link.el-button--danger) {
   color: #c62f36 !important;
+}
+
+/* Empty illustration */
+.empty-illust {
+  text-align: center;
+  padding: 40px 0;
+  color: #6f8194;
+  font-size: 14px;
 }
 
 :deep(.el-pagination) {

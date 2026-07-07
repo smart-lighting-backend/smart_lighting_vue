@@ -169,7 +169,19 @@ onMounted(() => {
             <td>{{ e.occurredAt || '--' }}</td>
           </tr>
           <tr v-if="visionList.length === 0">
-            <td colspan="5" class="empty-cell">暂无视觉事件</td>
+            <td colspan="5" class="empty-cell">
+                      <div class="empty-illust">
+                        <svg viewBox="0 0 120 80" fill="none" width="100" height="66">
+                          <rect x="20" y="15" width="80" height="50" rx="6" stroke="#b0cadd" stroke-width="1.2" fill="rgba(176,202,221,0.06)"/>
+                          <circle cx="42" cy="33" r="6" stroke="#b0cadd" stroke-width="1" fill="rgba(176,202,221,0.1)"/>
+                          <path d="M35-39l5 5 8-8" stroke="#b0cadd" stroke-width="1" stroke-linecap="round"/>
+                          <rect x="56" y="29" width="30" height="4" rx="2" fill="rgba(176,202,221,0.2)"/>
+                          <rect x="56" y="37" width="20" height="3" rx="1.5" fill="rgba(176,202,221,0.12)"/>
+                          <path d="M34 55l-8-8M86 55l8-8" stroke="#b0cadd" stroke-width="0.8" stroke-linecap="round" opacity="0.4"/>
+                        </svg>
+                        <p>暂无视觉事件</p>
+                      </div>
+                    </td>
           </tr>
         </tbody>
       </table>
@@ -202,7 +214,18 @@ onMounted(() => {
             <td>{{ e.occurredAt || '--' }}</td>
           </tr>
           <tr v-if="voiceList.length === 0">
-            <td colspan="5" class="empty-cell">暂无语音事件</td>
+            <td colspan="5" class="empty-cell">
+                      <div class="empty-illust">
+                        <svg viewBox="0 0 120 80" fill="none" width="100" height="66">
+                          <rect x="10" y="20" width="100" height="40" rx="20" stroke="#b0cadd" stroke-width="1.2" fill="rgba(176,202,221,0.06)"/>
+                          <path d="M35 30l-8 12h-6l-4 8h54" stroke="#b0cadd" stroke-width="1" stroke-linecap="round"/>
+                          <circle cx="70" cy="40" r="3" fill="rgba(176,202,221,0.3)"/>
+                          <path d="M48 44v8" stroke="#b0cadd" stroke-width="1.2" stroke-linecap="round"/>
+                          <path d="M30 52l-6 6M90 52l6 6" stroke="#b0cadd" stroke-width="0.8" stroke-linecap="round" opacity="0.4"/>
+                        </svg>
+                        <p>暂无语音事件</p>
+                      </div>
+                    </td>
           </tr>
         </tbody>
       </table>
@@ -307,7 +330,8 @@ onMounted(() => {
 .td-device { font-weight: 800; color: #006fc2; }
 .td-content { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .td-snapshot { font-size: 11px; color: #40566f; font-weight: 600; }
-.empty-cell { text-align: center; padding: 40px; color: #40566f; font-weight: 600; }
+.empty-cell { text-align: center; padding: 40px 16px; color: var(--text-faint); font-size: 13px; }
+.empty-illust { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 
 /* Confidence bar */
 .confidence-cell { display: flex; align-items: center; gap: 8px; }

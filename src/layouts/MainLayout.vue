@@ -249,7 +249,13 @@ onMounted(async () => {
 
       <nav class="sidebar-nav">
         <template v-if="loadingMenus">
-          <div class="nav-loading">加载菜单中...</div>
+          <div class="nav-skeleton">
+            <div class="skeleton-shimmer" style="height:18px; width:70%; margin:10px 12px;"></div>
+            <div class="skeleton-shimmer" style="height:18px; width:55%; margin:10px 12px;"></div>
+            <div class="skeleton-shimmer" style="height:18px; width:80%; margin:10px 12px;"></div>
+            <div class="skeleton-shimmer" style="height:18px; width:45%; margin:10px 12px;"></div>
+            <div class="skeleton-shimmer" style="height:18px; width:60%; margin:10px 12px;"></div>
+          </div>
         </template>
         <template v-else>
           <template v-for="item in navItems" :key="item.id">
