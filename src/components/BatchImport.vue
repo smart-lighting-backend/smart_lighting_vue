@@ -1,11 +1,12 @@
 <script setup>
-import { ref, computed, nextTick, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onUnmounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { downloadTemplate, parseImportFile, validateAllRows, rowsToPayload } from '../utils/excelTemplate.js'
 import { batchCreateDevices } from '../api/devices.js'
 import { useAMap } from '../composables/useAMap.js'
 import { parseLocation } from '../utils/coordinate.js'
+import { makeStreetlightIcon, makeFlashIcon, getDeviceColor, getAreaColor } from '../utils/streetlightIcon.js'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -18,6 +19,17 @@ const emit = defineEmits(['update:visible', 'imported'])
 const { AMap: AMapRef, loaded: mapLoaded } = useAMap()
 
 const step = ref('upload')
+
+// 区域筛选
+const mapAreaFilter = ref('')
+const mapAreaOptions = computed(() => {
+  const areas = [...new Set(props.existingDevices.map(d => d.area).filter(Boolean))]
+  return areas.sort()
+})
+const filteredExistingDevices = computed(() => {
+  if (!mapAreaFilter.value) return props.existingDevices
+  return props.existingDevices.filter(d => d.area === mapAreaFilter.value)
+})
 const file = ref(null)
 const fileInputRef = ref(null)
 const parsedRows = ref([])
@@ -32,9 +44,10 @@ const mapPreviewVisible = ref(false)
 const mapContainerRef = ref(null)
 let previewMap = null
 let previewMarkers = []
+let pulseTimer = null
+let pulseOn = false
 
 const SUPPORTED_EXTENSIONS = new Set(['csv', 'xlsx'])
-const COLORS = { 0: '#60748a', 1: '#1ba974', 2: '#60748a', 3: '#f59e0b' }
 
 const validCount = computed(() => validationResults.value.filter(row => row.valid).length)
 const errorCount = computed(() => validationResults.value.filter(row => !row.valid).length)
@@ -194,6 +207,12 @@ function closeMapPreview() {
   }
 }
 
+function refreshMapPreview() {
+  if (previewMap) initPreviewMap()
+}
+
+watch(mapAreaFilter, () => { nextTick(refreshMapPreview) })
+
 function initPreviewMap() {
   if (!mapContainerRef.value || !AMapRef.value) return
   if (previewMap) {
@@ -203,27 +222,53 @@ function initPreviewMap() {
   clearPreviewMarkers()
 
   previewMap = new AMapRef.value.Map(mapContainerRef.value, {
-    mapStyle: 'amap://styles/dark',
+    mapStyle: 'amap://styles/whitesmoke',
     zoom: 5,
     center: [104, 35],
   })
 
   const allMarkers = []
 
-  props.existingDevices.forEach(device => {
+  filteredExistingDevices.value.forEach(device => {
     const pos = parseLocation(device.location)
     if (!pos) return
-    const color = COLORS[device.status] || '#60748a'
+    const color = getDeviceColor(device)
+    const iconImage = makeStreetlightIcon(color, 26, 36)
     const marker = new AMapRef.value.Marker({
       position: [pos.lng, pos.lat],
-      content: `<div style="width:10px;height:10px;background:${color};border:2px solid rgba(255,255,255,0.86);border-radius:50%;box-shadow:0 0 8px ${color};"></div>`,
-      anchor: 'center',
+      icon: new AMapRef.value.Icon({
+        image: iconImage,
+        imageSize: new AMapRef.value.Size(26, 36),
+        size: new AMapRef.value.Size(26, 36),
+      }),
+      anchor: 'bottom-center',
       zIndex: 100,
     })
+    marker.__deviceData = device
     marker.setMap(previewMap)
     allMarkers.push(marker)
     previewMarkers.push(marker)
   })
+
+  // 闪烁动画 — 仅选中区域时启动
+  clearInterval(pulseTimer)
+  pulseOn = false
+  const existingOnly = previewMarkers.filter(m => m.__deviceData)
+  if (existingOnly.length > 0 && mapAreaFilter.value) {
+    pulseTimer = setInterval(() => {
+      pulseOn = !pulseOn
+      existingOnly.forEach(m => {
+        const d = m.__deviceData
+        const color = getDeviceColor(d)
+        const fn = pulseOn ? makeFlashIcon : makeStreetlightIcon
+        m.setIcon(new AMapRef.value.Icon({
+          image: fn(color, 26, 36),
+          imageSize: new AMapRef.value.Size(26, 36),
+          size: new AMapRef.value.Size(26, 36),
+        }))
+      })
+    }, 400)
+  }
 
   importCandidatesWithCoords.value.forEach((row, index) => {
     const lng = parseFloat(row.longitude)
@@ -244,6 +289,7 @@ function initPreviewMap() {
 }
 
 function clearPreviewMarkers() {
+  clearInterval(pulseTimer)
   previewMarkers.forEach(marker => marker.setMap(null))
   previewMarkers = []
 }
@@ -261,6 +307,7 @@ function handleDrop(event) {
 }
 
 onUnmounted(() => {
+  clearInterval(pulseTimer)
   clearPreviewMarkers()
   if (previewMap) {
     previewMap.destroy()
@@ -390,6 +437,10 @@ onUnmounted(() => {
         <div class="bi-map-dialog">
           <div class="bi-map-header">
             <span>导入地图预览：红色为待导入设备</span>
+            <select v-if="mapAreaOptions.length > 1" v-model="mapAreaFilter" class="bi-area-select">
+              <option value="">全部区域</option>
+              <option v-for="a in mapAreaOptions" :key="a" :value="a">{{ a }}</option>
+            </select>
             <button class="bi-close" type="button" aria-label="关闭地图预览" @click="closeMapPreview">&times;</button>
           </div>
           <div class="bi-map-body">
@@ -399,8 +450,7 @@ onUnmounted(() => {
           <div class="bi-map-footer">
             <span class="bi-legend">
               <i class="bi-dot import"></i> 待导入({{ importCandidatesWithCoords.length }})
-              <i class="bi-dot online"></i> 已有在线
-              <i class="bi-dot offline"></i> 离线
+              <i class="bi-dot online"></i> 已有设备({{ filteredExistingDevices.filter(d => d.status === 1).length }})
             </span>
             <button class="bi-btn-confirm" type="button" @click="closeMapPreview">关闭</button>
           </div>
@@ -827,12 +877,20 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 12px 16px;
   color: #0d1b2d;
   font-size: 14px;
   font-weight: 900;
   border-bottom: 1px solid rgba(0, 141, 230, 0.14);
   background: linear-gradient(180deg, #eef8ff, #ffffff);
+}
+
+.bi-area-select {
+  height: 30px; padding: 0 8px; border-radius: 6px;
+  border: 1px solid rgba(0,141,230,0.25);
+  background: #fff; color: #0d1b2d;
+  font-size: 12px; cursor: pointer; outline: none;
 }
 
 .bi-map-body {

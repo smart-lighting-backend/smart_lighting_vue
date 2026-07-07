@@ -24,8 +24,30 @@ let currentHighlight = null
 let infoWindow = null
 let resizeObserver = null
 
-const COLORS = { 0: '#6b7f93', 1: '#10b981', 2: '#7b8794', 3: '#f59e0b' }
+// 状态基础色（离线/停用/异常覆盖区域色）
+const STATUS_COLORS = { 0: '#6b7f93', 1: null, 2: '#7b8794', 3: '#f59e0b' }
 const LABELS = { 0: '停用', 1: '在线', 2: '离线', 3: '异常' }
+
+// 区域调色板（按首次出现顺序分配）
+const AREA_PALETTE = ['#4dd0e1','#5c6bc0','#4caf82','#ab47bc','#ff9800','#ef5350','#42a5f5','#66bb6a','#ffa726','#26c6da']
+const areaColorMap = {}
+
+function getAreaColor(area) {
+  if (!area) return '#26a6da'
+  if (!areaColorMap[area]) {
+    const idx = Object.keys(areaColorMap).length % AREA_PALETTE.length
+    areaColorMap[area] = AREA_PALETTE[idx]
+  }
+  return areaColorMap[area]
+}
+
+// 综合颜色：离线/停用 → 灰色；异常 → 橙色；在线 → 区域色
+function getMarkerColor(device) {
+  const s = device.status
+  if (s === 0 || s === 2) return STATUS_COLORS[s]
+  if (s === 3) return STATUS_COLORS[3]
+  return getAreaColor(device.area)
+}
 
 const noLocationCount = computed(() =>
   props.devices.filter(d => !parseLocation(d.location)).length
@@ -42,83 +64,244 @@ const mapStats = computed(() => {
   }
 })
 
-// ── 简易圆形图标（Canvas → data URI） ──
+// 区域列表（用于图例）
+const areaLegend = computed(() => {
+  return Object.keys(areaColorMap).map(area => ({
+    name: area,
+    color: areaColorMap[area],
+  }))
+})
+
+// ── 区域分组选择 ──
+const selectedArea = ref('')
+const selectedAreaCount = computed(() => {
+  if (!selectedArea.value) return 0
+  return props.devices.filter(d => d.area === selectedArea.value).length
+})
+const areaOptions = computed(() => {
+  const areas = [...new Set(props.devices.map(d => d.area).filter(Boolean))]
+  return areas.sort()
+})
+let pulseTimer = null
+let pulseOn = false
+
+function selectArea(area) {
+  clearInterval(pulseTimer)
+  pulseOn = false
+  if (!area) {
+    markerMap.forEach((m) => {
+      m.setIcon(getIcon(m.__deviceData, false))
+      m.setzIndex(100)
+    })
+    if (markerMap.size > 0) {
+      map.setFitView(Array.from(markerMap.values()), null, [60, 60, 60, 60], 400)
+    }
+    return
+  }
+  const areaMarkers = []
+  markerMap.forEach((m) => {
+    const d = m.__deviceData
+    if (d.area === area) {
+      m.setIcon(getIcon(d, true))
+      m.setzIndex(200)
+      areaMarkers.push(m)
+    } else {
+      m.setIcon(getDimmedIcon(d))
+      m.setzIndex(40)
+    }
+  })
+  if (areaMarkers.length > 0) {
+    nextTick(() => map.setFitView(areaMarkers, null, [60, 60, 60, 60], 400))
+  }
+  pulseTimer = setInterval(() => {
+    pulseOn = !pulseOn
+    markerMap.forEach((m) => {
+      const d = m.__deviceData
+      if (d.area === area) {
+        m.setIcon(pulseOn ? getFlashIcon(d) : getIcon(d, true))
+      }
+    })
+  }, 400)
+}
+
+watch(selectedArea, (val) => { selectArea(val) })
+
+function toGrayish(hex) {
+  // 去饱和：让颜色偏灰，保持低透明度
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  const gray = Math.round(r * 0.3 + g * 0.59 + b * 0.11)
+  const gr = Math.round(gray * 0.7 + r * 0.3)
+  const gg = Math.round(gray * 0.7 + g * 0.3)
+  const gb = Math.round(gray * 0.7 + b * 0.3)
+  return '#' + [gr, gg, gb].map(v => Math.min(255, v).toString(16).padStart(2, '0')).join('')
+}
+
+function getDimmedIcon(device) {
+  const color = getMarkerColor(device)
+  const baseHex = color.length >= 7 ? color.slice(0, 7) : color
+  const grayHex = toGrayish(baseHex)
+  return new AMapRef.value.Icon({
+    image: makeIcon(grayHex + '55', 36, 50),
+    imageSize: new AMapRef.value.Size(36, 50),
+    size: new AMapRef.value.Size(36, 50),
+  })
+}
+
+function getFlashIcon(device) {
+  const color = getMarkerColor(device)
+  const w = 60, h = 82
+  return new AMapRef.value.Icon({
+    image: makeFlashIcon(color, w, h),
+    imageSize: new AMapRef.value.Size(w, h),
+    size: new AMapRef.value.Size(w, h),
+  })
+}
+
+// 闪烁版图标（同尺寸，叠加白光层 + 更亮光晕）
+const flashIconCache = {}
+function makeFlashIcon(color, w, h) {
+  const k = `flash_${color}_${w}x${h}`
+  if (flashIconCache[k]) return flashIconCache[k]
+  const canvas = document.createElement('canvas')
+  canvas.width = w; canvas.height = h
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  drawStreetlight(ctx, color, w, h)
+
+  // 仅灯泡区域变亮（径向渐变，灯杆灯罩不变）
+  const pad = Math.round(w * 0.12)
+  const domeH = Math.round(h * 0.13)
+  const domeY = pad + Math.round(h * 0.04)
+  const domeCY = domeY + domeH
+  const bulbCY = domeCY - Math.round(domeH * 0.2)
+  const bulbR = Math.round(w * 0.18)
+
+  const flash = ctx.createRadialGradient(w / 2, bulbCY, bulbR * 0.2, w / 2, bulbCY, bulbR * 1.6)
+  flash.addColorStop(0, 'rgba(255,255,255,0.55)')
+  flash.addColorStop(0.5, 'rgba(255,255,255,0.2)')
+  flash.addColorStop(1, 'rgba(255,255,255,0)')
+  ctx.fillStyle = flash
+  ctx.beginPath()
+  ctx.arc(w / 2, bulbCY, bulbR * 1.6, 0, Math.PI * 2)
+  ctx.fill()
+
+  flashIconCache[k] = canvas.toDataURL('image/png')
+  return flashIconCache[k]
+}
+
+function toBaseHex(color) {
+  return color && color.length >= 7 ? color.slice(0, 7) : color
+}
+
+function drawStreetlight(ctx, color, w, h) {
+  const base = toBaseHex(color)
+  const cx = w / 2
+  const pad = Math.round(w * 0.12)
+
+  // 灯罩（圆顶）
+  const domeW = Math.round(w * 0.38)
+  const domeH = Math.round(h * 0.13)
+  const domeY = pad + Math.round(h * 0.04)
+  const domeCX = cx
+  const domeCY = domeY + domeH
+
+  // 灯泡在灯罩内
+  const bulbR = Math.round(domeW * 0.48)
+  const bulbCY = domeCY - Math.round(domeH * 0.2)
+
+  // 灯杆
+  const poleTop = domeCY + Math.round(domeH * 0.3)
+  const poleBot = h - pad
+  const poleW = Math.max(4, Math.round(w * 0.1))
+
+  // ── 地面投影 ──
+  ctx.fillStyle = 'rgba(0,0,0,0.12)'
+  ctx.beginPath()
+  ctx.ellipse(cx, poleBot, w * 0.28, Math.round(h * 0.02), 0, 0, Math.PI * 2)
+  ctx.fill()
+
+  // ── 光晕（灯泡下方大面积柔光） ──
+  const glowCY = bulbCY + domeH * 0.5
+  const glowR = w * 0.44
+  const glow = ctx.createRadialGradient(cx, glowCY, bulbR * 0.3, cx, glowCY, glowR)
+  glow.addColorStop(0, color)
+  glow.addColorStop(0.25, base + 'cc')
+  glow.addColorStop(0.55, base + '44')
+  glow.addColorStop(1, 'transparent')
+  ctx.fillStyle = glow
+  ctx.beginPath(); ctx.arc(cx, glowCY, glowR, 0, Math.PI * 2); ctx.fill()
+
+  // ── 灯杆（上粗下细，深灰金属感） ──
+  const poleGrad = ctx.createLinearGradient(cx - poleW, 0, cx + poleW, 0)
+  poleGrad.addColorStop(0, '#5d6d7e')
+  poleGrad.addColorStop(0.3, '#aeb6bf')
+  poleGrad.addColorStop(0.5, '#d5d8dc')
+  poleGrad.addColorStop(0.7, '#aeb6bf')
+  poleGrad.addColorStop(1, '#4a5568')
+  ctx.fillStyle = poleGrad
+  ctx.beginPath()
+  ctx.moveTo(cx - poleW / 2, poleTop)
+  ctx.lineTo(cx - poleW * 0.3, poleBot)
+  ctx.quadraticCurveTo(cx, poleBot + 1, cx + poleW * 0.3, poleBot)
+  ctx.lineTo(cx + poleW / 2, poleTop)
+  ctx.closePath()
+  ctx.fill()
+
+  // ── 灯颈（连接杆） ──
+  const neckW = Math.round(w * 0.06)
+  const neckTop = domeCY + domeH * 0.6
+  ctx.fillStyle = '#7f8c8d'
+  ctx.fillRect(cx - neckW / 2, neckTop, neckW, poleTop - neckTop)
+
+  // ── 灯臂（弧形小支架） ──
+  ctx.strokeStyle = '#95a5a6'
+  ctx.lineWidth = Math.max(1.5, w * 0.04)
+  ctx.beginPath()
+  ctx.moveTo(cx - domeW * 0.35, domeCY + domeH * 0.15)
+  ctx.quadraticCurveTo(cx - domeW * 0.5, domeCY - domeH * 0.1, cx - domeW * 0.3, domeCY - domeH * 0.35)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(cx + domeW * 0.35, domeCY + domeH * 0.15)
+  ctx.quadraticCurveTo(cx + domeW * 0.5, domeCY - domeH * 0.1, cx + domeW * 0.3, domeCY - domeH * 0.35)
+  ctx.stroke()
+
+  // ── 灯罩（半椭圆，挂在灯杆顶部） ──
+  const domeGrad = ctx.createLinearGradient(0, domeY, 0, domeCY + domeH * 0.5)
+  domeGrad.addColorStop(0, '#7f8c8d')
+  domeGrad.addColorStop(0.4, '#bdc3c7')
+  domeGrad.addColorStop(1, '#5d6d7e')
+  ctx.fillStyle = domeGrad
+  ctx.beginPath()
+  ctx.ellipse(cx, domeCY, domeW / 2, domeH, 0, Math.PI, 0)
+  ctx.fill()
+  ctx.strokeStyle = '#4a5568'
+  ctx.lineWidth = 1
+  ctx.stroke()
+
+  // ── 灯泡（暖白发光核心） ──
+  const bulbGrad = ctx.createRadialGradient(cx, bulbCY, 0, cx, bulbCY, bulbR)
+  bulbGrad.addColorStop(0, '#ffffff')
+  bulbGrad.addColorStop(0.25, base + 'ff')
+  bulbGrad.addColorStop(0.6, color)
+  bulbGrad.addColorStop(1, base + '88')
+  ctx.fillStyle = bulbGrad
+  ctx.beginPath(); ctx.arc(cx, bulbCY, bulbR, 0, Math.PI * 2); ctx.fill()
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)'
+  ctx.lineWidth = Math.max(1, w * 0.03)
+  ctx.stroke()
+}
+
 // ── Canvas 路灯图标 ──
 const iconCache = {}
 
 function makeIcon(color, w, h) {
   const k = `${color}_${w}x${h}`
   if (iconCache[k]) return iconCache[k]
-
   const canvas = document.createElement('canvas')
-  canvas.width = w
-  canvas.height = h
-  const ctx = canvas.getContext('2d')
-  const cx = w / 2
-  const headR = Math.round(w * 0.21)   // 灯泡半径
-  const headY = headR + 6              // 灯泡圆心 Y
-  const armW = Math.round(w * 0.46)    // 灯臂宽
-  const armH = Math.round(w * 0.1)     // 灯臂高
-  const armY = headY + headR + 2       // 灯臂 Y
-  const poleW = Math.max(3, Math.round(w * 0.1))
-  const poleY = armY + armH
-  const poleH = h - poleY - 4
-
-  ctx.shadowColor = color
-  ctx.shadowBlur = w * 0.42
-
-  // ─ 光晕（径向渐变） ─
-  const glow = ctx.createRadialGradient(cx, headY, headR * 0.25, cx, headY, headR * 2.8)
-  glow.addColorStop(0, color)
-  glow.addColorStop(0.35, color + 'aa')
-  glow.addColorStop(0.72, color + '33')
-  glow.addColorStop(1, 'transparent')
-  ctx.fillStyle = glow
-  ctx.beginPath()
-  ctx.arc(cx, headY, headR * 2.8, 0, Math.PI * 2)
-  ctx.fill()
-
-  ctx.shadowBlur = 0
-  ctx.strokeStyle = color + '66'
-  ctx.lineWidth = Math.max(1, w * 0.035)
-  ctx.beginPath()
-  ctx.arc(cx, headY, headR * 1.55, 0, Math.PI * 2)
-  ctx.stroke()
-
-  ctx.strokeStyle = 'rgba(255,255,255,0.88)'
-  ctx.lineWidth = Math.max(1, w * 0.025)
-  ctx.beginPath()
-  ctx.arc(cx, headY, headR * 1.12, 0, Math.PI * 2)
-  ctx.stroke()
-
-  // ─ 灯泡 ─
-  const bulb = ctx.createRadialGradient(cx - headR * 0.3, headY - headR * 0.3, headR * 0.1, cx, headY, headR)
-  bulb.addColorStop(0, '#ffffff')
-  bulb.addColorStop(0.42, color + 'ee')
-  bulb.addColorStop(1, color)
-  ctx.fillStyle = bulb
-  ctx.beginPath()
-  ctx.arc(cx, headY, headR, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.strokeStyle = 'rgba(255,255,255,0.95)'
-  ctx.lineWidth = Math.max(1.5, w * 0.05)
-  ctx.stroke()
-
-  // ─ 灯臂 ─
-  const stem = ctx.createLinearGradient(cx, armY, cx, h)
-  stem.addColorStop(0, color)
-  stem.addColorStop(1, color + '88')
-  ctx.fillStyle = stem
-  roundRect(ctx, cx - armW / 2, armY, armW, armH, 3)
-
-  // ─ 灯杆 ─
-  roundRect(ctx, cx - poleW / 2, poleY, poleW, poleH, poleW / 2)
-
-  ctx.fillStyle = color + '22'
-  ctx.beginPath()
-  ctx.ellipse(cx, h - 3, w * 0.2, 3, 0, 0, Math.PI * 2)
-  ctx.fill()
-
+  canvas.width = w; canvas.height = h
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  drawStreetlight(ctx, color, w, h)
   iconCache[k] = canvas.toDataURL('image/png')
   return iconCache[k]
 }
@@ -136,10 +319,10 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.fill()
 }
 
-function getIcon(status, hl) {
-  const color = COLORS[status] || '#888888'
-  const w = hl ? 52 : 38
-  const h = hl ? 70 : 52
+function getIcon(device, hl) {
+  const color = getMarkerColor(device)
+  const w = hl ? 60 : 44
+  const h = hl ? 82 : 60
   return new AMapRef.value.Icon({
     image: makeIcon(color, w, h),
     imageSize: new AMapRef.value.Size(w, h),
@@ -147,8 +330,9 @@ function getIcon(status, hl) {
   })
 }
 
-// ── 标记 ──
+// ── 标记与聚合 ──
 function addMarkers(AMap) {
+  // 清理旧标记
   markerMap.forEach(m => { m.setMap(null); m.remove() })
   markerMap.clear()
 
@@ -158,7 +342,7 @@ function addMarkers(AMap) {
 
     const marker = new AMap.Marker({
       position: [pos.lng, pos.lat],
-      icon: getIcon(d.status, false),
+      icon: getIcon(d, false),
       anchor: 'bottom-center',
       zIndex: 100,
     })
@@ -178,10 +362,9 @@ function addMarkers(AMap) {
     map.setFitView(Array.from(markerMap.values()))
   }
 }
-
 function openInfoWindow(device, pos) {
   if (!infoWindow) return
-  const color = COLORS[device.status] || '#888888'
+  const color = getMarkerColor(device)
   const label = LABELS[device.status] || '未知'
   const did = device.deviceId
   infoWindow.setContent(`
@@ -199,14 +382,14 @@ function openInfoWindow(device, pos) {
 function highlightDevice(deviceId) {
   if (currentHighlight) {
     const prev = currentHighlight
-    prev.setIcon(getIcon(prev.__deviceData.status, false))
+    prev.setIcon(getIcon(prev.__deviceData, false))
     currentHighlight = null
   }
   if (!deviceId) return
   const marker = markerMap.get(deviceId)
   if (!marker) return
   currentHighlight = marker
-  marker.setIcon(getIcon(marker.__deviceData.status, true))
+  marker.setIcon(getIcon(marker.__deviceData, true))
   map.setZoomAndCenter(18, marker.getPosition())
 }
 
@@ -250,6 +433,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  clearInterval(pulseTimer)
   resizeObserver?.disconnect()
   if (map) { map.destroy(); map = null }
   markerMap.clear()
@@ -272,6 +456,12 @@ defineExpose({ highlightDevice, clearHighlight, fitBounds: () => {} })
         <span><b>{{ mapStats.online }}</b> 在线</span>
         <span><b>{{ mapStats.warning }}</b> 异常</span>
       </div>
+      <select v-if="areaOptions.length > 1" v-model="selectedArea" class="dm-area-select">
+        <option value="">全部区域</option>
+        <option v-for="a in areaOptions" :key="a" :value="a">{{ a }}</option>
+      </select>
+      <span v-if="selectedArea" class="dm-area-count">{{ selectedAreaCount }} 台</span>
+      <button v-if="selectedArea" class="dm-clear-btn" @click="selectArea('')">×</button>
     </div>
     <div v-if="!loaded" class="dm-overlay">
       <span v-if="loading">地图加载中...</span>
@@ -282,6 +472,9 @@ defineExpose({ highlightDevice, clearHighlight, fitBounds: () => {} })
       <span><i class="online"></i>在线</span>
       <span><i class="warning"></i>异常</span>
       <span><i class="offline"></i>离线/停用</span>
+      <span v-for="a in areaLegend" :key="a.name" class="dm-area-item">
+        <i :style="{ background: a.color, color: a.color, boxShadow: '0 0 12px ' + a.color }"></i>{{ a.name }}
+      </span>
     </div>
     <div v-if="noLocationCount > 0" class="dm-no-loc-hint">
       {{ noLocationCount }} 台设备无位置信息，未在地图上显示
@@ -416,6 +609,32 @@ defineExpose({ highlightDevice, clearHighlight, fitBounds: () => {} })
   color: #0d1b2d;
   font-size: 13px;
 }
+.dm-area-select {
+  height: 30px; padding: 0 28px 0 10px;
+  border-radius: 6px; border: 1px solid rgba(0,141,230,0.28);
+  background: rgba(255,255,255,0.92);
+  color: #0d1b2d; font-size: 12px; font-weight: 500;
+  cursor: pointer; outline: none; min-width: 110px;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23006fc2'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.dm-area-select:hover { border-color: rgba(77,208,225,0.5); }
+.dm-area-select:focus { border-color: rgba(77,208,225,0.6); box-shadow: 0 0 0 2px rgba(77,208,225,0.15); }
+.dm-area-count {
+  font-size: 12px; font-weight: 600; color: #006fc2;
+  background: rgba(0,141,230,0.08); padding: 3px 10px; border-radius: 12px;
+  white-space: nowrap;
+}
+.dm-clear-btn {
+  width: 26px; height: 26px; border: 1px solid rgba(0,141,230,0.25);
+  border-radius: 50%; background: rgba(255,255,255,0.9);
+  color: #888; font-size: 15px; cursor: pointer; line-height: 22px;
+  padding: 0; text-align: center; flex-shrink: 0;
+  transition: all 0.15s;
+}
+.dm-clear-btn:hover { background: #fff; color: #ef5350; border-color: rgba(239,83,80,0.3); }
 .dm-legend {
   position: absolute;
   right: 22px;
@@ -430,6 +649,8 @@ defineExpose({ highlightDevice, clearHighlight, fitBounds: () => {} })
   background: rgba(255,255,255,0.86);
   box-shadow: 0 12px 28px rgba(30,86,130,0.12);
   backdrop-filter: blur(14px) saturate(1.2);
+  flex-wrap: wrap;
+  max-width: 60%;
 }
 .dm-legend span {
   display: inline-flex;
@@ -448,6 +669,7 @@ defineExpose({ highlightDevice, clearHighlight, fitBounds: () => {} })
 .dm-legend i.online { background: #10b981; color: #10b981; }
 .dm-legend i.warning { background: #f59e0b; color: #f59e0b; }
 .dm-legend i.offline { background: #7b8794; color: #7b8794; }
+.dm-legend .dm-area-item i { width: 6px; height: 6px; }
 .dm-no-loc-hint {
   position: absolute;
   left: 50%;
@@ -478,6 +700,7 @@ defineExpose({ highlightDevice, clearHighlight, fitBounds: () => {} })
     left: 18px;
     right: auto;
     flex-wrap: wrap;
+    max-width: 90%;
   }
 }
 </style>

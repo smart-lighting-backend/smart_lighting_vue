@@ -122,6 +122,9 @@ async function refreshLiveData() {
   } catch {}
 }
 
+// 统计卡片 + 边缘AI 每 45 秒自动刷新（在 setup 顶层注册，不在 onMounted 内）
+useAutoRefresh(refreshLiveData, { interval: 45000 })
+
 async function handleTriggerEdge() {
   edgeLoading.value = true
   try {
@@ -181,8 +184,6 @@ onMounted(async () => {
     stopScaleWatch = onScaleChange(() => initChart(trendData))
     window.addEventListener('resize', handleChartResize)
     nextTick(setupSectionObserver)
-    // 统计卡片 + 边缘AI 每 45 秒自动刷新
-    useAutoRefresh(refreshLiveData, { interval: 45000 })
   } catch (e) {
     console.error('[Dashboard] onMounted ERROR:', e.message, e.stack)
   }

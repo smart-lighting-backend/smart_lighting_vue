@@ -2,6 +2,7 @@
 import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useAMap } from '../composables/useAMap.js'
 import { parseLocation } from '../utils/coordinate.js'
+import { makeStreetlightIcon, makeFlashIcon, getDeviceColor, getAreaColor } from '../utils/streetlightIcon.js'
 
 const props = defineProps({
   modelValue: { type: Object, default: () => ({ lng: '', lat: '' }) },
@@ -23,18 +24,51 @@ const addressInput = ref('')
 const addressResults = ref([])
 const searching = ref(false)
 
-let map = null
-let pinMarker = null       // 红色大头针（新选点）
-let origMarker = null      // 粉色圆点（原始位置）
-let deviceMarkers = []     // 已有设备标记
-let geocoder = null
+// 区域筛选
+const selectedArea = ref('')
+const areaOptions = computed(() => {
+  const areas = [...new Set(props.devices.map(d => d.area).filter(Boolean))]
+  return areas.sort()
+})
+const filteredDevices = computed(() => {
+  if (!selectedArea.value) return props.devices
+  return props.devices.filter(d => d.area === selectedArea.value)
+})
 
-const COLORS = { 0: '#888', 1: '#4caf82', 2: '#9e9e9e', 3: '#ffa726' }
 const deviceOptions = computed(() =>
-  props.devices.map(d => ({ value: d.deviceId, label: `${d.name || d.deviceId} (${d.deviceId})` }))
+  filteredDevices.value.map(d => ({ value: d.deviceId, label: `${d.name || d.deviceId} (${d.deviceId})` }))
 )
 
-// ── 选点标记 ──
+const areaLegend = computed(() => {
+  const seen = {}
+  return props.devices.reduce((acc, d) => {
+    if (d.area && !seen[d.area]) {
+      seen[d.area] = true
+      acc.push({ name: d.area, color: getAreaColor(d.area) })
+    }
+    return acc
+  }, [])
+})
+
+let map = null
+let pinMarker = null
+let origMarker = null
+let deviceMarkers = []
+let geocoder = null
+let pulseTimer = null
+let pulseOn = false
+let searchPulseTimer = null
+let searchPulseOn = false
+
+function flashMarker(marker, color, w, h, on) {
+  const fn = on ? makeFlashIcon : makeStreetlightIcon
+  marker.setIcon(new AMapRef.value.Icon({
+    image: fn(color, w, h),
+    imageSize: new AMapRef.value.Size(w, h),
+    size: new AMapRef.value.Size(w, h),
+  }))
+}
+
 function updateCoords(lng, lat) {
   const a = Number(lng), b = Number(lat)
   if (isNaN(a) || isNaN(b)) return
@@ -63,7 +97,6 @@ function placePin(lng, lat) {
   }
 }
 
-// 原始位置标记——粉色高亮圆点 + 脉冲光圈，编辑模式下显示设备原来在哪
 function placeOrigMarker(lng, lat) {
   if (!map || !AMapRef.value) return
   if (origMarker) origMarker.setMap(null)
@@ -81,30 +114,33 @@ function placeOrigMarker(lng, lat) {
   origMarker.setMap(map)
 }
 
-function retryLoadMap() {
-  retry()
-}
+function retryLoadMap() { retry() }
 
 function onMapClick(e) {
   updateCoords(e.lnglat.getLng(), e.lnglat.getLat())
 }
 
-// ── 已有设备标记 ──
+// ── 已有设备标记（路灯图标） ──
 function addDeviceMarkers() {
   deviceMarkers.forEach(m => m.setMap(null))
   deviceMarkers = []
 
-  props.devices.forEach(d => {
+  filteredDevices.value.forEach(d => {
     const pos = parseLocation(d.location)
     if (!pos) return
-    const color = COLORS[d.status] || '#888'
-    const html = `<div title="${d.name || d.deviceId}" style="width:11px;height:11px;background:${color};border:2px solid rgba(255,255,255,0.8);border-radius:50%;box-shadow:0 0 5px ${color};cursor:pointer;"></div>`
+    const color = getDeviceColor(d)
+    const iconImage = makeStreetlightIcon(color, 30, 41)
     const m = new AMapRef.value.Marker({
       position: [pos.lng, pos.lat],
-      content: html,
-      anchor: 'center',
+      icon: new AMapRef.value.Icon({
+        image: iconImage,
+        imageSize: new AMapRef.value.Size(30, 41),
+        size: new AMapRef.value.Size(30, 41),
+      }),
+      anchor: 'bottom-center',
       zIndex: 100,
     })
+    m.__deviceData = d
     m.on('click', () => {
       updateCoords(pos.lng, pos.lat)
       map.setZoomAndCenter(17, [pos.lng, pos.lat])
@@ -112,16 +148,55 @@ function addDeviceMarkers() {
     m.setMap(map)
     deviceMarkers.push(m)
   })
+
+  // 选区分组后适配视野
+  if (deviceMarkers.length > 0 && selectedArea.value) {
+    map.setFitView(deviceMarkers)
+  }
+
+  // 闪烁动画 — 仅选中区域时启动
+  clearInterval(pulseTimer)
+  pulseOn = false
+  if (deviceMarkers.length > 0 && selectedArea.value) {
+    pulseTimer = setInterval(() => {
+      pulseOn = !pulseOn
+      deviceMarkers.forEach(m => {
+        const d = m.__deviceData
+        if (!d) return
+        flashMarker(m, getDeviceColor(d), 30, 41, pulseOn)
+      })
+    }, 400)
+  }
 }
+
+watch(selectedArea, () => { addDeviceMarkers() })
 
 // ── 设备搜索 ──
 function onDeviceSelect(deviceId) {
+  // 清除上一次搜索闪烁
+  clearInterval(searchPulseTimer)
+  searchPulseOn = false
+
+  if (!deviceId) {
+    searchDeviceId.value = ''
+    return
+  }
   const d = props.devices.find(x => x.deviceId === deviceId)
   if (!d) return
   const pos = parseLocation(d.location)
   if (!pos) return
   updateCoords(pos.lng, pos.lat)
   map.setZoomAndCenter(17, [pos.lng, pos.lat])
+
+  // 给搜到的设备加闪烁
+  const marker = deviceMarkers.find(m => m.__deviceData?.deviceId === deviceId)
+  if (marker) {
+    const color = getDeviceColor(marker.__deviceData)
+    searchPulseTimer = setInterval(() => {
+      searchPulseOn = !searchPulseOn
+      flashMarker(marker, color, 30, 41, searchPulseOn)
+    }, 400)
+  }
 }
 
 // ── 地址搜索 ──
@@ -178,11 +253,9 @@ function cancel() { emit('update:visible', false) }
 // ── 地图初始化 ──
 function initMap() {
   if (!mapContainerRef.value || !AMapRef.value || map) return
-  map = new AMapRef.value.Map(mapContainerRef.value, { mapStyle: 'amap://styles/dark', zoom: 5, center: [104, 35] })
+  map = new AMapRef.value.Map(mapContainerRef.value, { mapStyle: 'amap://styles/whitesmoke', zoom: 5, center: [104, 35] })
   map.on('click', onMapClick)
-
   addDeviceMarkers()
-
   const iLng = parseFloat(props.modelValue.lng)
   const iLat = parseFloat(props.modelValue.lat)
   if (!isNaN(iLng) && !isNaN(iLat)) {
@@ -201,9 +274,11 @@ watch(() => props.visible, (v) => {
     addressInput.value = ''
     addressResults.value = []
     searchDeviceId.value = ''
+    selectedArea.value = ''
     nextTick(() => { if (loaded.value) { initMap(); addDeviceMarkers() } })
   } else {
-    // 关闭弹窗时销毁地图实例，确保下次打开时重新初始化
+    clearInterval(pulseTimer)
+    clearInterval(searchPulseTimer)
     if (pinMarker) { pinMarker.setMap(null); pinMarker = null }
     if (origMarker) { origMarker.setMap(null); origMarker = null }
     deviceMarkers.forEach(m => m.setMap(null))
@@ -213,6 +288,8 @@ watch(() => props.visible, (v) => {
 })
 
 onUnmounted(() => {
+  clearInterval(pulseTimer)
+  clearInterval(searchPulseTimer)
   deviceMarkers.forEach(m => m.setMap(null))
   deviceMarkers = []
   if (origMarker) { origMarker.setMap(null); origMarker = null }
@@ -224,16 +301,24 @@ onUnmounted(() => {
 <template>
   <Teleport to="body">
     <div v-if="visible" class="lp-overlay">
-      <!-- 顶部工具栏 -->
       <div class="lp-topbar">
         <span class="lp-title">地图选点 — 点击地图放置路灯位置</span>
         <div class="lp-search-group">
+          <select v-if="areaOptions.length > 1" v-model="selectedArea" class="lp-area-select">
+            <option value="">全部区域</option>
+            <option v-for="a in areaOptions" :key="a" :value="a">{{ a }}</option>
+          </select>
           <el-select
             v-model="searchDeviceId" filterable clearable
-            placeholder="搜索已有设备..." size="small" class="lp-device-select"
+            placeholder="选择已有设备或搜索..." size="small" class="lp-device-select"
+            popper-class="lp-device-popper"
+            :teleported="false"
             @change="onDeviceSelect"
           >
-            <el-option v-for="opt in deviceOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+            <el-option
+              v-for="opt in deviceOptions" :key="opt.value"
+              :label="opt.label" :value="opt.value"
+            />
           </el-select>
           <div class="lp-addr-wrap">
             <input v-model="addressInput" class="lp-addr-input"
@@ -252,7 +337,6 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- 地图 -->
       <div class="lp-map-wrap">
         <div v-if="!loaded" class="lp-loading">
           <span v-if="loading">地图加载中...</span>
@@ -264,7 +348,6 @@ onUnmounted(() => {
         <div ref="mapContainerRef" class="lp-map"></div>
       </div>
 
-      <!-- 底部坐标栏 -->
       <div class="lp-bottombar">
         <div class="lp-info">
           <svg viewBox="0 0 24 24" fill="none" width="18" height="18"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" fill="#4dd0e1"/></svg>
@@ -274,11 +357,11 @@ onUnmounted(() => {
           <template v-else>点击地图放置标记，或搜索设备/地址定位</template>
         </div>
         <div class="lp-legend">
-          <span class="lp-legend-item"><i style="background:#4caf82"></i> 在线</span>
-          <span class="lp-legend-item"><i style="background:#9e9e9e"></i> 离线</span>
-          <span class="lp-legend-item"><i style="background:#ffa726"></i> 异常</span>
-          <span class="lp-legend-item"><i style="background:#ff1493"></i> 原位</span>
           <span class="lp-legend-item"><i style="background:#ff4444"></i> 新选点</span>
+          <span class="lp-legend-item"><i style="background:#ff1493"></i> 原位</span>
+          <span v-for="a in areaLegend" :key="a.name" class="lp-legend-item">
+            <i :style="{ background: a.color, boxShadow: '0 0 6px ' + a.color }"></i> {{ a.name }}
+          </span>
         </div>
         <div v-if="confirmMsg" class="lp-warn">{{ confirmMsg }}</div>
       </div>
@@ -292,7 +375,6 @@ onUnmounted(() => {
   display: flex; flex-direction: column;
   background: #060e1f;
 }
-
 .lp-topbar {
   display: flex; align-items: center; gap: 14px;
   padding: 12px 20px; flex-shrink: 0;
@@ -301,11 +383,31 @@ onUnmounted(() => {
 }
 .lp-title { font-size: 15px; font-weight: 600; color: #d0eaf8; white-space: nowrap; }
 .lp-search-group { display: flex; align-items: center; gap: 8px; flex: 1; }
-.lp-device-select { width: 220px; }
+.lp-area-select {
+  height: 32px; padding: 0 8px; border-radius: 6px;
+  border: 1px solid rgba(0,120,200,0.25);
+  background: rgba(0,30,70,0.6); color: #d0eaf8;
+  font-size: 13px; cursor: pointer; outline: none; min-width: 90px;
+}
+.lp-area-select:focus { border-color: rgba(77,208,225,0.5); }
+.lp-device-select { width: 260px; }
 .lp-device-select :deep(.el-input__wrapper) {
   background: rgba(0,30,70,0.6); border-color: rgba(0,120,200,0.25); box-shadow: none;
 }
 .lp-device-select :deep(.el-input__inner) { color: #d0eaf8; }
+.lp-device-select :deep(.el-select-dropdown) {
+  background: #0d1b33; border: 1px solid rgba(0,120,200,0.3);
+}
+.lp-device-select :deep(.el-select-dropdown__item) {
+  color: #d0eaf8;
+}
+.lp-device-select :deep(.el-select-dropdown__item.hover),
+.lp-device-select :deep(.el-select-dropdown__item:hover) {
+  background: rgba(0,100,180,0.25);
+}
+.lp-device-select :deep(.el-select-dropdown__item.selected) {
+  color: #4dd0e1; font-weight: 600;
+}
 
 .lp-addr-wrap { flex: 1; position: relative; }
 .lp-addr-input {
@@ -360,13 +462,12 @@ onUnmounted(() => {
 }
 .lp-info strong { color: #4dd0e1; font-family: monospace; font-size: 15px; }
 
-.lp-legend { display: flex; gap: 14px; flex-shrink: 0; }
+.lp-legend { display: flex; gap: 14px; flex-shrink: 0; flex-wrap: wrap; }
 .lp-legend-item { font-size: 12px; color: rgba(140,190,220,0.55); display: flex; align-items: center; gap: 4px; }
 .lp-legend-item i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.7); }
 
 .lp-warn { color: #ef5350; font-size: 13px; flex-shrink: 0; }
 
-/* 原始位置脉冲光圈 */
 .orig-pulse-ring {
   position: absolute; z-index: 1;
   width: 28px; height: 28px;

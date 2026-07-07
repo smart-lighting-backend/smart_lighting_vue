@@ -129,21 +129,21 @@ function typeLabel(type) {
   return ALARM_TYPE_MAP[type] || type || '--'
 }
 
+// URL 参数预设筛选（同步执行，在 setup 阶段而非 onMounted 中）
+if (route.query.status && statusOptions.some(o => o.value === route.query.status)) {
+  filters.status = route.query.status
+}
+if (route.query.type && typeOptions.some(o => o.value === route.query.type)) {
+  filters.type = route.query.type
+}
+
+useAutoRefresh(loadData, {
+  interval: 25000,
+  isSensitive: () => exporting.value || filters.startTime || filters.endTime,
+})
+
 onMounted(() => {
-  // 从 URL 参数预设筛选条件（如 Dashboard 跳转来的 ?status=ACTIVE）
-  const statusParam = route.query.status
-  if (statusParam && statusOptions.some(o => o.value === statusParam)) {
-    filters.status = statusParam
-  }
-  const typeParam = route.query.type
-  if (typeParam && typeOptions.some(o => o.value === typeParam)) {
-    filters.type = typeParam
-  }
   loadData()
-  useAutoRefresh(loadData, {
-    interval: 25000,
-    isSensitive: () => exporting.value || filters.startTime || filters.endTime,
-  })
 })
 </script>
 
