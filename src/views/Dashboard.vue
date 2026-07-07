@@ -510,4 +510,17 @@ onUnmounted(() => {
 .mini-btn:hover:not(:disabled) { background: rgba(0,120,200,0.35); border-color: rgba(77,208,225,0.5); color: #4dd0e1; }
 .mini-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .card-sub { font-size: 15px; color: rgba(140,190,220,0.55); }
+
+@media (max-width: 1100px) {
+  .dashboard-page { padding: 16px; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .map-row { flex-direction: column; }
+  .map-section, .stats-cards { min-width: unset; width: 100%; }
+}
+@media (max-width: 600px) {
+  .stats-grid { grid-template-columns: 1fr; }
+  .edge-tabs { flex-wrap: wrap; }
+  .edge-tab-text { display: none; }
+  .chart-area { height: 280px; }
+}
 </style>

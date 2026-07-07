@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchStrategyList, fetchStrategyHistory, toggleStrategy, deleteStrategy } from '../api/strategy.js'
-import { ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElInputNumber, ElButton, ElPagination, ElIcon, ElMessage, ElDialog } from 'element-plus'
+import { ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElInputNumber, ElButton, ElPagination, ElIcon, ElMessage, ElMessageBox, ElDialog, ElNotification } from 'element-plus'
 import { Search, Refresh, Timer } from '@element-plus/icons-vue'
 import { useUserInfo } from '../composables/useUserInfo.js'
 
@@ -105,13 +105,17 @@ async function toggle(s) {
   await toggleStrategy(s.id, s.enabled)
 }
 async function remove(s) {
-  if (!confirm(`确认删除策略"${s.name}"？`)) return
   try {
+    await ElMessageBox.confirm(`确认删除策略"${s.name}"？此操作不可恢复。`, '删除确认', {
+      confirmButtonText: '确定删除',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
     await deleteStrategy(s.id)
-    ElMessage.success('删除成功')
+    ElNotification.success({ title: '删除成功', message: `策略"${s.name}"已删除` })
     await loadData()
-  } catch (e) {
-    ElMessage.error(e?.message || '删除失败')
+  } catch (err) {
+    if (err !== 'cancel') ElNotification.error({ title: '删除失败', message: err?.message || '' })
   }
 }
 </script>

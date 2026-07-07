@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { getSystemLogs } from '../api/log.js'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElNotification } from 'element-plus'
 
 const logs = ref([])
 const total = ref(0)
@@ -77,10 +77,10 @@ const loadLogs = async () => {
       logs.value = res.data.list
       total.value = res.data.total
     } else {
-      ElMessage.error(res.message || '获取系统日志失败')
+      ElNotification.error({ title: '获取日志失败', message: res.message || '未知错误' })
     }
   } catch (e) {
-    ElMessage.error('加载失败: ' + (e.message || e))
+    ElNotification.error({ title: '加载失败', message: e.message || e })
   } finally {
     loading.value = false
   }

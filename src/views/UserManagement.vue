@@ -1,9 +1,9 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import {
-  ElInput, ElButton, ElTable, ElTableColumn, ElTag, ElCard, ElDialog, ElForm, ElFormItem, ElSelect, ElOption, ElMessage, ElMessageBox, ElPagination
+  ElInput, ElButton, ElTable, ElTableColumn, ElTag, ElCard, ElDialog, ElForm, ElFormItem, ElSelect, ElOption, ElMessageBox, ElPagination, ElNotification
 } from 'element-plus'
-import { Search, Plus, Edit, Delete, CircleClose, CircleCheck } from '@element-plus/icons-vue'
+import { Search, Plus, Edit, Delete, CircleClose, CircleCheck, WarningFilled } from '@element-plus/icons-vue'
 import { fetchUserList, fetchAllRoles, createUser, updateUser, disableUser, deleteUser } from '../api/user'
 import { useUserInfo } from '../composables/useUserInfo.js'
 
@@ -121,7 +121,7 @@ const loadUsers = async () => {
       total.value = res.total || 0
     }
   } catch (error) {
-    ElMessage.error('获取用户列表失败')
+    ElNotification.error({ title: '获取用户列表失败', message: '' })
   } finally {
     loading.value = false
   }
@@ -163,15 +163,15 @@ const handleSubmit = async () => {
       try {
         if (dialogType.value === 'add') {
           await createUser(payload)
-          ElMessage.success('新增用户成功')
+          ElNotification.success({ title: '新增成功', message: `用户 ${payload.username} 已创建` })
         } else {
           await updateUser(payload.id, payload)
-          ElMessage.success('修改用户成功')
+          ElNotification.success({ title: '修改成功', message: `用户 ${payload.username} 已更新` })
         }
         dialogVisible.value = false
         loadUsers()
       } catch (error) {
-        ElMessage.error(error.message || '操作失败')
+        ElNotification.error({ title: '操作失败', message: error.message || '' })
       }
     }
   })
@@ -195,10 +195,10 @@ const handleToggleEnabled = (row) => {
       } else {
         await disableUser(row.id)
       }
-      ElMessage.success(`${actionText}成功`)
+      ElNotification.success({ title: `${actionText}成功`, message: `用户 ${row.username} 已${actionText}` })
       loadUsers()
     } catch (error) {
-      ElMessage.error(`${actionText}失败`)
+      ElNotification.error({ title: `${actionText}失败`, message: '' })
     }
   }).catch(() => {})
 }
@@ -211,10 +211,10 @@ const handleDelete = (row) => {
   }).then(async () => {
     try {
       await deleteUser(row.id)
-      ElMessage.success('删除成功')
+      ElNotification.success({ title: '删除成功', message: `用户 ${row.username} 已删除` })
       loadUsers()
     } catch (error) {
-      ElMessage.error('删除失败')
+      ElNotification.error({ title: '删除失败', message: '' })
     }
   }).catch(() => {})
 }
@@ -246,7 +246,14 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="user-list-container">
+  <div class="user-manage-page">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">用户管理</h1>
+        <p class="page-sub">管理系统用户、角色分配与账号状态</p>
+      </div>
+    </div>
+
     <div class="search-bar">
       <ElForm :inline="true" :model="searchForm" class="search-form">
         <ElFormItem label="用户名">
@@ -269,27 +276,27 @@ onMounted(() => {
     </div>
 
     <div class="user-content" v-loading="loading">
-      <ElTable :data="userList" border stripe style="width: 100%">
-        <ElTableColumn prop="displayId" label="ID" width="80" />
-        <ElTableColumn prop="username" label="用户名" min-width="120" />
-        <ElTableColumn prop="realName" label="真实姓名" min-width="100" />
-        <ElTableColumn label="角色" min-width="120">
+      <ElTable :data="userList" border stripe style="width: 100%" @sort-change="() => {}">
+        <ElTableColumn prop="displayId" label="ID" width="80" sortable="custom" />
+        <ElTableColumn prop="username" label="用户名" min-width="120" sortable="custom" show-overflow-tooltip />
+        <ElTableColumn prop="realName" label="真实姓名" min-width="100" sortable="custom" show-overflow-tooltip />
+        <ElTableColumn label="角色" min-width="120" sortable="custom" prop="roleName">
           <template #default="{ row }">
             <ElTag v-if="row.roleCode" :type="getRoleTag(row.roleCode).type">
               {{ row.roleName }}
             </ElTag>
           </template>
         </ElTableColumn>
-        <ElTableColumn prop="department" label="部门" min-width="120" />
+        <ElTableColumn prop="department" label="部门" min-width="120" show-overflow-tooltip />
         <ElTableColumn prop="phone" label="联系电话" min-width="120" />
-        <ElTableColumn label="状态" width="100">
+        <ElTableColumn label="状态" width="100" sortable="custom" prop="enabled">
           <template #default="{ row }">
             <ElTag :type="row.enabled ? 'success' : 'danger'">
               {{ row.enabled ? '正常' : '停用' }}
             </ElTag>
           </template>
         </ElTableColumn>
-        <ElTableColumn label="创建时间" min-width="160">
+        <ElTableColumn label="创建时间" min-width="160" sortable="custom" prop="createTime">
           <template #default="{ row }">
             <span class="time-cell">
               {{ formatDateTime(row.createTime) }}
@@ -370,11 +377,30 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.user-list-container {
+.user-manage-page {
   padding: 24px 28px;
   min-height: 100vh;
   background: transparent !important;
   color: #1d3148;
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.page-title {
+  font-size: 22px;
+  font-weight: 800;
+  color: #0d1b2d;
+  margin: 0 0 4px;
+}
+.page-sub {
+  font-size: 13px;
+  color: #40566f;
+  margin: 0;
+  font-weight: 500;
 }
 
 .search-bar {
@@ -496,5 +522,13 @@ onMounted(() => {
   --el-pagination-text-color: #1d3148;
   --el-pagination-button-color: #1d3148;
   --el-pagination-button-disabled-bg-color: rgba(232, 246, 255, 0.62);
+}
+
+@media (max-width: 900px) {
+  .user-manage-page { padding: 16px; }
+  .page-header { flex-direction: column; }
+  .search-form :deep(.el-form-item) { display: block; width: 100%; }
+  .search-form :deep(.el-form-item__content) { width: 100%; }
+  .user-content { padding: 12px; overflow-x: auto; }
 }
 </style>

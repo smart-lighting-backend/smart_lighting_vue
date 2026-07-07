@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { fetchVisionEvents, fetchVoiceEvents } from '../api/events.js'
 import { useAutoRefresh } from '../composables/useAutoRefresh.js'
-import { ElInput, ElSelect, ElOption, ElPagination, ElTag, ElMessage } from 'element-plus'
+import { ElInput, ElSelect, ElOption, ElPagination, ElTag, ElMessage, ElNotification } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 
 const activeTab = ref('vision')
@@ -34,7 +34,7 @@ async function loadVisionEvents() {
       visionTotal.value = res.data.total || 0
     }
   } catch (e) {
-    ElMessage.error('加载视觉事件失败')
+    ElNotification.error({ title: '加载视觉事件失败', message: e?.message || '' })
   } finally {
     loading.value = false
   }
@@ -54,7 +54,7 @@ async function loadVoiceEvents() {
       voiceTotal.value = res.data.total || 0
     }
   } catch (e) {
-    ElMessage.error('加载语音事件失败')
+    ElNotification.error({ title: '加载语音事件失败', message: e?.message || '' })
   } finally {
     loading.value = false
   }
@@ -321,4 +321,10 @@ onMounted(() => {
 
 /* Pagination */
 .pagination-wrap { padding: 12px 16px; display: flex; justify-content: flex-end; }
+
+@media (max-width: 900px) {
+  .event-center-page { padding: 16px; }
+  .filter-bar { flex-wrap: wrap; }
+  .table-wrap { overflow-x: auto; }
+}
 </style>

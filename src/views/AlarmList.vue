@@ -14,8 +14,11 @@ import {
   ElCard,
   ElRow,
   ElCol,
-  ElMessage
+  ElMessage,
+  ElMessageBox,
+  ElNotification
 } from 'element-plus';
+
 import {
   Warning,
   CircleClose,
@@ -23,14 +26,23 @@ import {
   Clock,
   MapLocation,
   Search,
-  Refresh
+  Refresh,
+  Delete
 } from '@element-plus/icons-vue';
+
 import {
   fetchAlarmList,
   getAlarmTypes,
   getAlarmLevels,
-  getAlarmStatuses
+  getAlarmStatuses,
+  deleteAlarm,
+  batchDeleteAlarm
 } from '../api/alarm';
+import { useUserInfo } from '../composables/useUserInfo.js';
+
+const { hasPerm } = useUserInfo();
+
+const selectedIds = ref([]);
 
 const router = useRouter();
 
@@ -130,8 +142,64 @@ function handlePageSizeChange(pageSize) {
   loadAlarmList();
 }
 
+async function handleDelete(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除告警 #${row.id} 吗？此操作不可恢复。`,
+      '删除确认',
+      { confirmButtonText: '确定删除', cancelButtonText: '取消', type: 'warning' }
+    );
+    const res = await deleteAlarm(row.id);
+    if (res.code === 200) {
+      ElNotification.success({ title: '删除成功', message: `告警 #${row.id} 已删除` });
+      loadAlarmList();
+    }
+  } catch (err) {
+    if (err !== 'cancel') ElNotification.error({ title: '删除失败', message: '' });
+  }
+}
+
+async function handleBatchDelete() {
+  if (!selectedIds.value.length) {
+    ElMessage.warning('请先选择要删除的告警');
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认删除选中的 ${selectedIds.value.length} 条告警？此操作不可恢复。`,
+      '批量删除确认',
+      { confirmButtonText: '确定删除', cancelButtonText: '取消', type: 'warning' }
+    );
+    await batchDeleteAlarm({ ids: selectedIds.value });
+    ElNotification.success({ title: '批量删除成功', message: `已删除 ${selectedIds.value.length} 条告警` });
+    selectedIds.value = [];
+    loadAlarmList();
+  } catch (err) {
+    if (err !== 'cancel') ElNotification.error({ title: '批量删除失败', message: '' });
+  }
+}
+
 function viewDetail(row) {
   router.push(`/alarm/detail/${row.id}`);
+}
+
+async function handleDelete(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除告警 "${row.id}" 吗？此操作不可恢复。`,
+      '确认删除',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    );
+    const res = await deleteAlarm(row.id);
+    if (res.code === 200) {
+      ElMessage.success('删除成功');
+      loadAlarmList();
+    }
+  } catch (err) {
+    if (err !== 'cancel') {
+      ElMessage.error(err?.message || '删除失败');
+    }
+  }
 }
 
 onMounted(() => {
@@ -240,6 +308,15 @@ onMounted(() => {
           <ElButton @click="handleReset" :icon="Refresh">
             重置
           </ElButton>
+          <ElButton
+            v-if="hasPerm('alarm:delete')"
+            type="danger"
+            @click="handleBatchDelete"
+            :icon="Delete"
+            :disabled="!selectedIds.length"
+          >
+            批量删除
+          </ElButton>
         </ElCol>
       </ElRow>
     </ElCard>
@@ -251,8 +328,10 @@ onMounted(() => {
         style="width: 100%"
         row-class-name="clickable-row"
         @row-click="viewDetail"
+        @selection-change="selectedIds = $event.map(r => r.id)"
         border
       >
+        <ElTableColumn type="selection" width="45" />
         <ElTableColumn prop="id" label="告警ID" width="100">
           <template #default="scope">
             <span class="alarm-id">{{ scope.row.id }}</span>
@@ -307,11 +386,18 @@ onMounted(() => {
             </span>
           </template>
         </ElTableColumn>
-        <ElTableColumn label="操作" width="100">
+        <ElTableColumn label="操作" width="180">
           <template #default="scope">
             <ElButton size="small" type="primary" @click.stop="viewDetail(scope.row)">
-              查看详情
+              详情
             </ElButton>
+            <ElButton
+              v-if="hasPerm('alarm:delete')"
+              size="small"
+              type="danger"
+              :icon="Delete"
+              @click.stop="handleDelete(scope.row)"
+            />
           </template>
         </ElTableColumn>
       </ElTable>

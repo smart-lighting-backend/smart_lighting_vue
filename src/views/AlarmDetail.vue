@@ -12,7 +12,8 @@ import {
   ElDivider,
   ElInput,
   ElMessageBox,
-  ElMessage
+  ElMessage,
+  ElNotification
 } from 'element-plus';
 import {
   ArrowLeft,
@@ -24,9 +25,10 @@ import {
   Monitor,
   CircleCheck,
   Loading,
-  Document
+  Document,
+  Delete
 } from '@element-plus/icons-vue';
-import { fetchAlarmDetail, updateAlarmStatus, getAlarmStatuses } from '../api/alarm';
+import { fetchAlarmDetail, updateAlarmStatus, getAlarmStatuses, deleteAlarm } from '../api/alarm';
 import { useUserInfo } from '../composables/useUserInfo.js';
 
 const { hasPerm } = useUserInfo();
@@ -87,7 +89,7 @@ async function handleStatusChange(status) {
   const currentStatus = alarmDetail.value?.status;
   
   if (currentStatus === status) {
-    ElMessage.info('当前状态已是该值');
+    ElNotification.info({ title: '状态提示', message: '当前状态已是该值' });
     return;
   }
 
@@ -107,14 +109,31 @@ async function handleStatusChange(status) {
 
     const response = await updateAlarmStatus(alarmId, status, handleRemark.value);
     if (response.code === 200) {
-      ElMessage.success('操作成功');
+      ElNotification.success({ title: '操作成功', message: `告警状态已更新为 ${status}` });
       handleRemark.value = '';
       loadAlarmDetail();
     }
   } catch (error) {
     if (error !== 'cancel') {
-      ElMessage.error('操作失败');
+      ElNotification.error({ title: '操作失败', message: '' });
     }
+  }
+}
+
+async function handleDeleteAlarm() {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除此告警 #${alarmDetail.value.id} 吗？此操作不可恢复。`,
+      '删除确认',
+      { confirmButtonText: '确定删除', cancelButtonText: '取消', type: 'warning' }
+    );
+    const res = await deleteAlarm(alarmDetail.value.id);
+    if (res.code === 200) {
+      ElNotification.success({ title: '告警已删除', message: `告警 #${alarmDetail.value.id} 已删除` });
+      router.push('/alarm/list');
+    }
+  } catch (err) {
+    if (err !== 'cancel') ElNotification.error({ title: '删除失败', message: '' });
   }
 }
 
@@ -302,6 +321,15 @@ onMounted(() => {
             >
               处理完成
             </ElButton>
+            <ElButton
+               v-if="hasPerm('alarm:delete')"
+               type="danger"
+               plain
+               @click="handleDeleteAlarm"
+               :icon="Delete"
+             >
+               删除告警
+             </ElButton>
           </div>
         </div>
       </ElCard>
