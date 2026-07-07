@@ -270,7 +270,7 @@ onMounted(() => {
 
     <div class="user-content" v-loading="loading">
       <ElTable :data="userList" border stripe style="width: 100%">
-        <ElTableColumn prop="id" label="ID" width="80" />
+        <ElTableColumn prop="displayId" label="ID" width="80" />
         <ElTableColumn prop="username" label="用户名" min-width="120" />
         <ElTableColumn prop="realName" label="真实姓名" min-width="100" />
         <ElTableColumn label="角色" min-width="120">

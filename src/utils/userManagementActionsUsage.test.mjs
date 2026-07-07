@@ -21,4 +21,7 @@ assert.match(viewSource, /row\.enabled === false \? '启用' : '停用'/)
 assert.doesNotMatch(viewSource, /:disabled="row\.enabled === false"/)
 assert.match(viewSource, /<Delete \/> 删除/)
 
+assert.match(viewSource, /<ElTableColumn prop="displayId" label="ID"/)
+assert.doesNotMatch(viewSource, /<ElTableColumn prop="id" label="ID"/)
+
 console.log('userManagementActionsUsage tests passed')
