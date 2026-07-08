@@ -353,7 +353,7 @@ a,
 
 /* Inputs and selectors */
 :where(
-  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.el-input__inner):not(.el-select__input):not(.search-input):not(.tree-search-input),
   textarea,
   select,
   .el-input__wrapper,
@@ -366,8 +366,6 @@ a,
   .device-select,
   .node-select,
   .form-input,
-  .tree-search-input,
-  .search-input,
   .lp-addr-input,
   .bi-edit-input
 ) {
@@ -380,7 +378,7 @@ a,
 }
 
 :where(
-  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.el-input__inner):not(.el-select__input):not(.search-input):not(.tree-search-input),
   textarea,
   select,
   .el-input__wrapper,
@@ -393,14 +391,49 @@ a,
   .device-select,
   .node-select,
   .form-input,
-  .tree-search-input,
-  .search-input,
   .lp-addr-input
 ):focus,
 :where(.el-input__wrapper, .el-select__wrapper):focus-within {
   background: #ffffff !important;
   border-color: rgba(0, 141, 230, 0.45) !important;
   box-shadow: 0 0 0 3px rgba(0, 141, 230, 0.12), 0 0 0 1px rgba(0, 141, 230, 0.35) !important;
+}
+
+.el-input__wrapper .el-input__inner,
+.el-select__wrapper .el-select__input {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  outline: none !important;
+}
+
+.el-input__wrapper .el-input__inner:focus,
+.el-input__wrapper .el-input__inner:focus-visible,
+.el-select__wrapper .el-select__input:focus,
+.el-select__wrapper .el-select__input:focus-visible {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.search-wrap .search-input,
+.tree-search .tree-search-input {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+.search-wrap .search-input:focus,
+.search-wrap .search-input:focus-visible,
+.tree-search .tree-search-input:focus,
+.tree-search .tree-search-input:focus-visible {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
 }
 
 ::placeholder,
