@@ -581,10 +581,43 @@ export function fetchAreaStatusStatistics() {
  * @param {string} deviceId
  * @param {{ action: 'ON'|'OFF'|'DIMMING', brightness?: number }} payload
  */
+function applyMockControl(deviceId, payload) {
+  const now = new Date()
+  const manualExpireAt = new Date(now.getTime() + 30 * 60 * 1000).toISOString()
+  const action = payload.action === 'DIMMING'
+    ? `DIMMING(${payload.brightness})`
+    : payload.action
+  const brightness = payload.action === 'OFF'
+    ? 0
+    : payload.action === 'ON'
+      ? 100
+      : payload.brightness
+  const device = activeMockDevices().find(d => d.deviceId === deviceId)
+  let currentLatestData = {}
+  try {
+    currentLatestData = device?.latestData ? JSON.parse(device.latestData) : {}
+  } catch {
+    currentLatestData = {}
+  }
+  const latestData = {
+    ...currentLatestData,
+    action,
+    brightness,
+  }
+
+  applyMockUpdate(deviceId, {
+    manualMode: true,
+    manualExpireAt,
+    latestData: JSON.stringify(latestData),
+  })
+
+  return { id: Date.now(), deviceId, ...payload, status: 'SENT', source: 'MANUAL', issuedAt: now.toISOString() }
+}
+
 export function controlDevice(deviceId, payload) {
   return safeCall(
     () => request.post(`/api/devices/${deviceId}/control`, payload),
-    { code: 200, msg: 'mock', data: { id: Date.now(), deviceId, ...payload, status: 'SENT', source: 'MANUAL', issuedAt: new Date().toISOString() } },
+    () => applyMockControl(deviceId, payload),
     `POST /api/devices/${deviceId}/control`
   )
 }

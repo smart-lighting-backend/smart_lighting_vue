@@ -10,7 +10,7 @@ import { fetchLatestTelemetry, fetchTelemetryHistory } from '../api/telemetry.js
 import { sendControlCommand, getControlHistory } from '../api/control.js';
 import { useUserInfo } from '../composables/useUserInfo.js';
 import { useAutoRefresh } from '../composables/useAutoRefresh.js';
-import { resolveManualControlState } from '../utils/manualControlState.js';
+import { parseLatestData, resolveManualControlState } from '../utils/manualControlState.js';
 const { hasPerm } = useUserInfo();
 const route = useRoute();
 const router = useRouter();
@@ -25,6 +25,8 @@ const tempHumidityChartRef = ref(null);
 let chartInstance = null;
 let tempHumidityChartInstance = null;
 let resizeTimer = null;
+const MANUAL_CONTROL_STATE_EVENT = 'manual-control-state-change';
+
 
 const controlLoading = ref(false);
 const controlHistory = ref([]);
@@ -154,6 +156,31 @@ async function fetchLatestControlRecord() {
 async function applyDeviceControlState(device) {
   const latestRecord = await fetchLatestControlRecord()
   applyResolvedControlState(resolveManualControlState(device, latestRecord, 80))
+}
+
+function handleManualControlStateChange(event) {
+  const detail = event?.detail
+  if (!detail || detail.deviceId !== deviceId.value) return
+
+  const nextBrightness = detail.brightness ?? (detail.action === 'OFF' ? 0 : brightness.value)
+  const latestData = {
+    ...(parseLatestData(deviceInfo.value?.latestData) || {}),
+    action: detail.action,
+    brightness: nextBrightness,
+  }
+
+  deviceInfo.value = {
+    ...(deviceInfo.value || {}),
+    latestData: JSON.stringify(latestData),
+    manualMode: detail.manualMode !== false,
+    manualExpireAt: detail.manualExpireAt || deviceInfo.value?.manualExpireAt || null,
+  }
+
+  applyResolvedControlState({
+    power: detail.action !== 'OFF',
+    brightness: nextBrightness,
+  })
+  loadControlHistory()
 }
 
 const loadHealth = async () => {
@@ -614,6 +641,7 @@ const loadControlHistory = async () => {
 };
 onMounted(async () => {
  deviceId.value = route.params.id;
+ window.addEventListener(MANUAL_CONTROL_STATE_EVENT, handleManualControlStateChange);
  await loadDeviceInfo();
  loadHealth();
  loadLatestTelemetry();
@@ -667,6 +695,7 @@ onBeforeUnmount(() => {
  clearTimeout(resizeTimer);
  }
  window.removeEventListener('resize', handleResize);
+ window.removeEventListener(MANUAL_CONTROL_STATE_EVENT, handleManualControlStateChange);
  if (chartInstance) {
  chartInstance.dispose();
  chartInstance = null;

@@ -5,10 +5,14 @@ import { getControlHistory } from '../api/control.js'
 import { useAutoRefresh } from '../composables/useAutoRefresh.js'
 import {
   isManualModeActive,
+  parseLatestData,
   resolveManualControlState,
 } from '../utils/manualControlState.js'
 
 const emit = defineEmits(['close'])
+
+const MANUAL_CONTROL_STATE_EVENT = 'manual-control-state-change'
+const MANUAL_LOCK_MINUTES = 30
 
 const nodes = ref([])
 const selectedNode = ref(null)
@@ -100,6 +104,48 @@ function currentDeviceId() {
   return nodeDeviceId(selectedNode.value)
 }
 
+function manualActionValue(action, nextBrightness) {
+  return action === 'DIMMING' ? `DIMMING(${nextBrightness})` : action
+}
+
+function markManualControlSuccess(action) {
+  if (!selectedNode.value) return
+
+  const nextBrightness = action === 'OFF'
+    ? 0
+    : action === 'ON'
+      ? (brightness.value || 100)
+      : brightness.value
+  const nextAction = manualActionValue(action, nextBrightness)
+  const manualExpireAt = new Date(Date.now() + MANUAL_LOCK_MINUTES * 60 * 1000).toISOString()
+  const latestData = {
+    ...(parseLatestData(selectedNode.value.latestData) || {}),
+    action: nextAction,
+    brightness: nextBrightness,
+  }
+
+  Object.assign(selectedNode.value, {
+    manualMode: true,
+    manualExpireAt,
+    latestData: JSON.stringify(latestData),
+  })
+  applyResolvedState({ power: action !== 'OFF', brightness: nextBrightness })
+
+  const id = currentDeviceId()
+  if (typeof window !== 'undefined' && id) {
+    window.dispatchEvent(new CustomEvent(MANUAL_CONTROL_STATE_EVENT, {
+      detail: {
+        deviceId: id,
+        action: nextAction,
+        brightness: nextBrightness,
+        manualMode: true,
+        manualExpireAt,
+        issuedAt: new Date().toISOString(),
+      },
+    }))
+  }
+}
+
 function closeModal() {
   emit('close')
 }
@@ -114,6 +160,7 @@ async function togglePower() {
   sending.value = true
   try {
     await controlDevice(currentDeviceId(), { action })
+    markManualControlSuccess(action)
     addLog(`✅ 节点响应：电源 ${action} 成功`)
   } catch (e) {
     addLog(`❌ 节点无响应：${e?.message || '请检查连接'}`, 'error')
@@ -130,6 +177,7 @@ async function setBrightness() {
   sending.value = true
   try {
     await controlDevice(currentDeviceId(), { action: 'DIMMING', brightness: brightness.value })
+    markManualControlSuccess('DIMMING')
     addLog(`✅ 节点响应：亮度已设置为 ${brightness.value}%`)
   } catch (e) {
     addLog(`❌ 节点无响应：${e?.message || '指令超时'}`, 'error')

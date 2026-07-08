@@ -29,7 +29,16 @@ export function stateFromAction(action, brightness, fallbackBrightness = 75) {
 
 export function stateFromLatestData(latestData, fallbackBrightness = 75) {
   const data = parseLatestData(latestData)
-  return stateFromAction(data?.action, data?.brightness, fallbackBrightness)
+  const actionState = stateFromAction(data?.action, data?.brightness, fallbackBrightness)
+  if (actionState) return actionState
+
+  if (data?.brightness === undefined || data?.brightness === null) return null
+  const brightness = Number(data.brightness)
+  if (!Number.isFinite(brightness)) return null
+  return {
+    power: brightness > 0,
+    brightness: Math.max(0, Math.min(100, brightness)),
+  }
 }
 
 export function isManualModeActive(node, now = new Date()) {
@@ -57,9 +66,11 @@ export function stateFromControlHistoryRecord(record, fallbackBrightness = 75) {
   return null
 }
 
-export function resolveManualControlState(node, latestHistoryRecord, fallbackBrightness = 75) {
-  // 始终优先从控制历史解析（无论手动/自动模式），因为 latestData 遥测快照不含 action 字段
+export function resolveManualControlState(node, latestHistoryRecord, fallbackBrightness = 75, now = new Date()) {
+  // Manual locks reflect the latest command; otherwise the device snapshot wins.
   const historyState = stateFromControlHistoryRecord(latestHistoryRecord, fallbackBrightness)
-  if (historyState) return historyState
-  return stateFromLatestData(node?.latestData, fallbackBrightness)
+  const latestDataState = stateFromLatestData(node?.latestData, fallbackBrightness)
+
+  if (isManualModeActive(node, now)) return historyState || latestDataState
+  return latestDataState || historyState
 }
