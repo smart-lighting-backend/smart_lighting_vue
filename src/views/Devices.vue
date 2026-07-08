@@ -3,8 +3,8 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { useAutoRefresh } from '../composables/useAutoRefresh.js'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElCascader } from 'element-plus'
-import { Plus, Edit, Delete, Location, Download, Upload, Connection, CircleClose } from '@element-plus/icons-vue'
-import { createDevice, deleteDevice, fetchDeviceList, updateDevice, batchDeviceArea, STATUS_MAP, STATUS_QUERY_MAP } from '../api/devices.js'
+import { Plus, Edit, Delete, Location, Download, Upload, Connection, CircleClose, CircleCheck } from '@element-plus/icons-vue'
+import { createDevice, deleteDevice, fetchDeviceList, updateDevice, batchDeviceArea, batchDisableDevices, batchEnableDevices, batchDeleteDevices, STATUS_MAP, STATUS_QUERY_MAP } from '../api/devices.js'
 import { fetchAreaTree } from '../api/area.js'
 import { useUserInfo } from '../composables/useUserInfo.js'
 import LocationPicker from '../components/LocationPicker.vue'
@@ -149,7 +149,7 @@ onMounted(() => {
     } catch {}
   }, {
     interval: 60000,
-    isSensitive: () => createDialogVisible.value || deletingDeviceId.value || togglingDeviceId.value || areaBindingDialogVisible.value || areaUnbindingDeviceId.value,
+    isSensitive: () => createDialogVisible.value || deletingDeviceId.value || togglingDeviceId.value || areaBindingDialogVisible.value || areaUnbindingDeviceId.value || batchOperating.value,
   })
 })
 
@@ -421,6 +421,7 @@ const selectedIds = ref([])
 const batchDialogVisible = ref(false)
 const batchTargetAreaId = ref(null)
 const areaTreeOptions = ref([])
+const batchOperating = ref(false)
 
 /** 加载区域树用于 Cascader 选择 */
 async function loadAreaTree() {
@@ -575,6 +576,21 @@ function isSelected(deviceId) {
   return selectedIds.value.includes(deviceId)
 }
 
+function getSelectedDevices() {
+  return filtered.value.filter(d => selectedIds.value.includes(d.deviceId))
+}
+
+function getSelectedDeviceDbIds() {
+  return getSelectedDevices()
+    .map(d => d.id)
+    .filter(id => id !== undefined && id !== null)
+}
+
+function resetBatchSelection() {
+  selectMode.value = false
+  selectedIds.value = []
+}
+
 /** 全选当前筛选结果 */
 function selectAllFiltered() {
   selectedIds.value = filtered.value.map(d => d.deviceId)
@@ -593,31 +609,29 @@ async function confirmBatchAssign() {
     ElMessage.warning('请选择目标区域')
     return
   }
-  const deviceIds = filtered.value
-    .filter(d => selectedIds.value.includes(d.deviceId))
-    .map(d => d.id)
+  const deviceIds = getSelectedDeviceDbIds()
   if (!deviceIds.length) {
     ElMessage.warning('未选中任何设备')
     return
   }
+  batchOperating.value = true
   try {
     const areaName = getAreaPathById(batchTargetAreaId.value)
     await batchDeviceArea({ deviceIds, areaId: batchTargetAreaId.value, areaName })
     ElMessage.success(`已成功将 ${deviceIds.length} 台设备分配到「${areaName || '目标区域'}」`)
     batchDialogVisible.value = false
-    selectMode.value = false
-    selectedIds.value = []
-    loadDevices()
+    resetBatchSelection()
+    await loadDevices()
   } catch (error) {
     ElMessage.error(error?.message || '批量分配失败')
+  } finally {
+    batchOperating.value = false
   }
 }
 
 /** 批量清除区域关联 */
 async function batchClearArea() {
-  const deviceIds = filtered.value
-    .filter(d => selectedIds.value.includes(d.deviceId))
-    .map(d => d.id)
+  const deviceIds = getSelectedDeviceDbIds()
   if (!deviceIds.length) {
     ElMessage.warning('未选中任何设备')
     return
@@ -631,14 +645,109 @@ async function batchClearArea() {
   } catch {
     return
   }
+  batchOperating.value = true
   try {
     await batchDeviceArea({ deviceIds, areaId: null, areaName: '' })
     ElMessage.success(`已清除 ${deviceIds.length} 台设备的区域关联`)
-    selectMode.value = false
-    selectedIds.value = []
-    loadDevices()
+    resetBatchSelection()
+    await loadDevices()
   } catch (error) {
     ElMessage.error(error?.message || '批量清除失败')
+  } finally {
+    batchOperating.value = false
+  }
+}
+
+/** 批量停用设备 */
+async function batchDisableSelected() {
+  const deviceIds = getSelectedDeviceDbIds()
+  if (!deviceIds.length) {
+    ElMessage.warning('未选中任何设备')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认停用 ${deviceIds.length} 台设备？停用后设备将不可参与自动控制。`,
+      '批量停用设备',
+      { confirmButtonText: '确认停用', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+
+  batchOperating.value = true
+  try {
+    const res = await batchDisableDevices({ deviceIds })
+    const success = res?.data?.success ?? deviceIds.length
+    ElMessage.success(`已停用 ${success} 台设备`)
+    resetBatchSelection()
+    await loadDevices()
+  } catch (error) {
+    ElMessage.error(error?.message || '批量停用失败')
+  } finally {
+    batchOperating.value = false
+  }
+}
+
+/** 批量启用设备 */
+async function batchEnableSelected() {
+  const deviceIds = getSelectedDeviceDbIds()
+  if (!deviceIds.length) {
+    ElMessage.warning('未选中任何设备')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认启用 ${deviceIds.length} 台设备？启用后设备将恢复为离线待心跳状态。`,
+      '批量启用设备',
+      { confirmButtonText: '确认启用', cancelButtonText: '取消', type: 'info' }
+    )
+  } catch {
+    return
+  }
+
+  batchOperating.value = true
+  try {
+    const res = await batchEnableDevices({ deviceIds })
+    const success = res?.data?.success ?? deviceIds.length
+    ElMessage.success(`已启用 ${success} 台设备`)
+    resetBatchSelection()
+    await loadDevices()
+  } catch (error) {
+    ElMessage.error(error?.message || '批量启用失败')
+  } finally {
+    batchOperating.value = false
+  }
+}
+
+/** 批量删除设备 */
+async function batchDeleteSelected() {
+  const deviceIds = getSelectedDeviceDbIds()
+  if (!deviceIds.length) {
+    ElMessage.warning('未选中任何设备')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认删除 ${deviceIds.length} 台设备？删除后设备将从列表中移除。`,
+      '批量删除设备',
+      { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+
+  batchOperating.value = true
+  try {
+    const res = await batchDeleteDevices({ deviceIds })
+    const success = res?.data?.success ?? deviceIds.length
+    ElMessage.success(`已删除 ${success} 台设备`)
+    resetBatchSelection()
+    await loadDevices()
+  } catch (error) {
+    ElMessage.error(error?.message || '批量删除失败')
+  } finally {
+    batchOperating.value = false
   }
 }
 </script>
@@ -660,7 +769,7 @@ async function batchClearArea() {
           批量导入
         </button>
         <button
-          v-if="hasPerm('device:update')"
+          v-if="hasPerm('device:update') || hasPerm('device:delete')"
           class="header-btn batch-btn"
           :class="{ active: selectMode }"
           @click="toggleSelectMode"
@@ -846,18 +955,30 @@ async function batchClearArea() {
     <!-- 批量操作栏 -->
     <div v-if="selectMode && selectedIds.length" class="batch-bar">
       <span class="batch-bar-info">已选 <strong>{{ selectedIds.length }}</strong> / {{ filtered.length }} 台</span>
-      <button class="batch-bar-btn select-all-btn" @click="selectAllFiltered">
+      <button class="batch-bar-btn select-all-btn" :disabled="batchOperating" @click="selectAllFiltered">
         <svg viewBox="0 0 24 24" fill="none" width="13" height="13"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M8 12l3 3 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         全选当前筛选
       </button>
       <div class="batch-bar-actions">
-        <button class="batch-bar-btn assign-btn" @click="openBatchAssign">
+        <button v-if="hasPerm('device:update')" class="batch-bar-btn assign-btn" :disabled="batchOperating" @click="openBatchAssign">
           <svg viewBox="0 0 24 24" fill="none" width="13" height="13"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="currentColor"/></svg>
           分配区域
         </button>
-        <button class="batch-bar-btn clear-btn" @click="batchClearArea">
+        <button v-if="hasPerm('device:update')" class="batch-bar-btn clear-btn" :disabled="batchOperating" @click="batchClearArea">
           <svg viewBox="0 0 24 24" fill="none" width="13" height="13"><path d="M3 6h18M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           清除区域
+        </button>
+        <button v-if="hasPerm('device:update')" class="batch-bar-btn disable-btn" :disabled="batchOperating" @click="batchDisableSelected">
+          <CircleClose class="batch-bar-icon" />
+          停用设备
+        </button>
+        <button v-if="hasPerm('device:update')" class="batch-bar-btn enable-btn" :disabled="batchOperating" @click="batchEnableSelected">
+          <CircleCheck class="batch-bar-icon" />
+          启用设备
+        </button>
+        <button v-if="hasPerm('device:delete')" class="batch-bar-btn delete-btn" :disabled="batchOperating" @click="batchDeleteSelected">
+          <Delete class="batch-bar-icon" />
+          删除设备
         </button>
       </div>
     </div>
@@ -1000,7 +1121,7 @@ async function batchClearArea() {
       </div>
       <template #footer>
         <ElButton @click="batchDialogVisible = false">取消</ElButton>
-        <ElButton type="primary" @click="confirmBatchAssign">确认分配</ElButton>
+        <ElButton type="primary" :loading="batchOperating" @click="confirmBatchAssign">确认分配</ElButton>
       </template>
     </ElDialog>
   </div>
@@ -1320,24 +1441,48 @@ async function batchClearArea() {
   font-size: 12px; font-weight: 500; cursor: pointer;
   transition: all 0.2s; white-space: nowrap;
 }
+.batch-bar-btn:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+  transform: none;
+}
+.batch-bar-icon { width: 13px; height: 13px; flex-shrink: 0; }
 .select-all-btn {
   background: rgba(0,141,230,0.08);
   border: 1px solid rgba(0,141,230,0.18);
   color: #006fc2;
 }
-.select-all-btn:hover { background: rgba(0,141,230,0.14); color: #008de6; }
+.select-all-btn:hover:not(:disabled) { background: rgba(0,141,230,0.14); color: #008de6; }
 .assign-btn {
   background: rgba(0,141,230,0.1);
   border: 1px solid rgba(0,141,230,0.24);
   color: #006fc2;
 }
-.assign-btn:hover { background: rgba(0,141,230,0.16); }
+.assign-btn:hover:not(:disabled) { background: rgba(0,141,230,0.16); }
 .clear-btn {
+  background: rgba(245,158,11,0.1);
+  border: 1px solid rgba(245,158,11,0.24);
+  color: #9a5a00;
+}
+.clear-btn:hover:not(:disabled) { background: rgba(245,158,11,0.16); color: #b46a00; }
+.disable-btn {
+  background: rgba(96,116,138,0.1);
+  border: 1px solid rgba(96,116,138,0.22);
+  color: #40566f;
+}
+.disable-btn:hover:not(:disabled) { background: rgba(96,116,138,0.16); color: #263d57; }
+.enable-btn {
+  background: rgba(16,185,129,0.09);
+  border: 1px solid rgba(16,185,129,0.22);
+  color: #0d8b62;
+}
+.enable-btn:hover:not(:disabled) { background: rgba(16,185,129,0.15); color: #10a875; }
+.delete-btn {
   background: rgba(229,72,77,0.08);
-  border: 1px solid rgba(229,72,77,0.18);
+  border: 1px solid rgba(229,72,77,0.2);
   color: #c62f36;
 }
-.clear-btn:hover { background: rgba(229,72,77,0.14); color: #e5484d; }
+.delete-btn:hover:not(:disabled) { background: rgba(229,72,77,0.14); color: #e5484d; }
 
 /* 批量分配弹窗 */
 .batch-area-dialog :deep(.el-dialog__body) { padding: 20px 24px; }

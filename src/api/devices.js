@@ -14,6 +14,9 @@
  *   GET    /api/devices/statistics/area-status 区域状态统计
  *   POST   /api/devices/{deviceId}/control   手动控制
  *   PUT    /api/devices/batch-area            批量绑定/解绑设备区域
+ *   PUT    /api/devices/batch-disable         批量停用设备
+ *   PUT    /api/devices/batch-enable          批量启用设备
+ *   DELETE /api/devices/batch                 批量删除设备
  *
  * 设备状态: 0 停用 | 1 在线 | 2 离线 | 3 异常
  */
@@ -149,6 +152,66 @@ function applyMockDelete(deviceId) {
     persistMockDevices()
   }
   return null
+}
+
+function applyMockBatchDisable(deviceIds = []) {
+  const idSet = new Set(deviceIds.map(id => String(id)))
+  const updated = []
+
+  mockDevices.forEach((device, index) => {
+    if (!idSet.has(String(device.id))) return
+
+    const next = {
+      ...device,
+      enabled: false,
+      status: 0,
+    }
+    mockDevices.splice(index, 1, next)
+    updated.push(next)
+  })
+
+  persistMockDevices()
+  return { total: deviceIds.length, success: updated.length, failed: deviceIds.length - updated.length }
+}
+
+function applyMockBatchEnable(deviceIds = []) {
+  const idSet = new Set(deviceIds.map(id => String(id)))
+  const updated = []
+
+  mockDevices.forEach((device, index) => {
+    if (!idSet.has(String(device.id))) return
+
+    const next = {
+      ...device,
+      enabled: true,
+      status: 2,
+    }
+    mockDevices.splice(index, 1, next)
+    updated.push(next)
+  })
+
+  persistMockDevices()
+  return { total: deviceIds.length, success: updated.length, failed: deviceIds.length - updated.length }
+}
+
+function applyMockBatchDelete(deviceIds = []) {
+  const idSet = new Set(deviceIds.map(id => String(id)))
+  let success = 0
+
+  mockDevices.forEach((device, index) => {
+    if (!idSet.has(String(device.id))) return
+
+    mockDevices.splice(index, 1, {
+      ...device,
+      deleted: true,
+      enabled: false,
+      status: 0,
+    })
+    success += 1
+  })
+
+  persistMockDevices()
+  return { total: deviceIds.length, success, failed: deviceIds.length - success }
 }
 
 function applyMockBatchArea(deviceIds = [], areaId, areaName = '') {
@@ -405,6 +468,45 @@ export function deleteDevice(deviceId) {
     reportMock(`DELETE /api/devices/${deviceId}`)
     return { code: 200, msg: 'mock', data: applyMockDelete(deviceId) }
   })
+}
+
+// ── 批量停用设备 PUT /api/devices/batch-disable ─────────────────────────
+/**
+ * @param {{ deviceIds: number[] }} data
+ */
+export function batchDisableDevices(data) {
+  const payload = { deviceIds: data.deviceIds }
+  return safeCall(
+    () => request.put('/api/devices/batch-disable', payload),
+    () => applyMockBatchDisable(data.deviceIds),
+    'PUT /api/devices/batch-disable'
+  )
+}
+
+// ── 批量启用设备 PUT /api/devices/batch-enable ──────────────────────────
+/**
+ * @param {{ deviceIds: number[] }} data
+ */
+export function batchEnableDevices(data) {
+  const payload = { deviceIds: data.deviceIds }
+  return safeCall(
+    () => request.put('/api/devices/batch-enable', payload),
+    () => applyMockBatchEnable(data.deviceIds),
+    'PUT /api/devices/batch-enable'
+  )
+}
+
+// ── 批量删除设备 DELETE /api/devices/batch ──────────────────────────────
+/**
+ * @param {{ deviceIds: number[] }} data
+ */
+export function batchDeleteDevices(data) {
+  const payload = { deviceIds: data.deviceIds }
+  return safeCall(
+    () => request.delete('/api/devices/batch', { data: payload }),
+    () => applyMockBatchDelete(data.deviceIds),
+    'DELETE /api/devices/batch'
+  )
 }
 
 // ── 最新遥测数据 GET /api/telemetry/latest/{deviceId} ────────────────────
