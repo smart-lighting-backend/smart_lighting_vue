@@ -4,9 +4,11 @@ import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { downloadTemplate, parseImportFile, validateAllRows, rowsToPayload } from '../utils/excelTemplate.js'
 import { batchCreateDevices } from '../api/devices.js'
+import { fetchAreaList, batchCreateAreas } from '../api/area.js'
 import { useAMap } from '../composables/useAMap.js'
+import { useUserInfo } from '../composables/useUserInfo.js'
 import { parseLocation } from '../utils/coordinate.js'
-import { makeStreetlightIcon, makeFlashIcon, getDeviceColor, getAreaColor } from '../utils/streetlightIcon.js'
+import { makeStreetlightIcon, makeFlashIcon, getDeviceColor } from '../utils/streetlightIcon.js'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -17,6 +19,7 @@ const props = defineProps({
 const emit = defineEmits(['update:visible', 'imported'])
 
 const { AMap: AMapRef, loaded: mapLoaded } = useAMap()
+const { hasPerm } = useUserInfo()
 
 const step = ref('upload')
 
@@ -36,6 +39,9 @@ const parsedRows = ref([])
 const validationResults = ref([])
 const importing = ref(false)
 const importResult = ref({ success: 0, failed: 0, errors: [] })
+const areaCheckPending = ref(false)
+const missingAreas = ref([])
+const pendingPayload = ref(null)
 
 const editingCell = ref(null)
 const editValue = ref('')
@@ -108,7 +114,8 @@ function revalidateAll() {
   validationResults.value = validateAllRows(parsedRows.value, new Set(props.existingDeviceIds))
 }
 
-function revalidateRow() {
+// rowIndex currently unused — editing any cell requires full revalidation for duplicate detection
+function revalidateRow(_rowIndex) {
   revalidateAll()
 }
 
@@ -154,6 +161,35 @@ async function doImport() {
   importing.value = true
   const payload = rowsToPayload(validRows)
 
+  // 收集待导入设备中的分区名称
+  const areaNames = [...new Set(
+    validRows.map(r => r.area).filter(a => a && a.trim())
+  )]
+
+  if (areaNames.length > 0) {
+    try {
+      // 查出现有分区
+      const existingRes = await fetchAreaList()
+      const existingAreas = (existingRes?.data || []).map(a => a.name)
+      const missing = areaNames.filter(n => !existingAreas.includes(n))
+
+      if (missing.length > 0) {
+        importing.value = false
+        missingAreas.value = missing
+        pendingPayload.value = payload
+        areaCheckPending.value = true
+        return
+      }
+    } catch (e) {
+      // 分区查询失败不阻塞导入
+      console.warn('[BatchImport] 分区检查失败，跳过:', e.message)
+    }
+  }
+
+  await executeImport(payload)
+}
+
+async function executeImport(payload) {
   try {
     const response = await batchCreateDevices(payload)
     const data = response?.data || response || {}
@@ -179,6 +215,36 @@ async function doImport() {
   }
 }
 
+async function handleAreaConfirm() {
+  areaCheckPending.value = false
+  importing.value = true
+  try {
+    await batchCreateAreas(missingAreas.value)
+    // 通知分区管理页面刷新
+    window.dispatchEvent(new CustomEvent('area-created'))
+  } catch (e) {
+    const msg = e?.response?.data?.msg || e?.message || '创建分区失败'
+    if (e?.response?.status === 403) {
+      ElMessage.error('没有新增分区的权限，无法导入')
+    } else {
+      ElMessage.error('创建分区失败: ' + msg)
+    }
+    missingAreas.value = []
+    pendingPayload.value = null
+    return
+  }
+  await executeImport(pendingPayload.value)
+  missingAreas.value = []
+  pendingPayload.value = null
+}
+
+function handleAreaCancel() {
+  areaCheckPending.value = false
+  missingAreas.value = []
+  pendingPayload.value = null
+  ElMessage.info('已取消导入')
+}
+
 function reset() {
   step.value = 'upload'
   file.value = null
@@ -186,6 +252,9 @@ function reset() {
   validationResults.value = []
   importResult.value = { success: 0, failed: 0, errors: [] }
   editingCell.value = null
+  areaCheckPending.value = false
+  missingAreas.value = []
+  pendingPayload.value = null
 }
 
 function handleClose() {
@@ -453,6 +522,41 @@ onUnmounted(() => {
               <i class="bi-dot online"></i> 已有设备({{ filteredExistingDevices.filter(d => d.status === 1).length }})
             </span>
             <button class="bi-btn-confirm" type="button" @click="closeMapPreview">关闭</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 分区确认弹窗 -->
+    <Teleport to="body">
+      <div v-if="areaCheckPending" class="bi-overlay">
+        <div class="bi-dialog" style="max-width:480px">
+          <div class="bi-header">
+            <div>
+              <span class="bi-title">分区不存在</span>
+              <p class="bi-subtitle">以下分区未在系统中找到，导入前需先创建</p>
+            </div>
+          </div>
+          <div class="bi-body compact">
+            <ul class="bi-missing-list">
+              <li v-for="a in missingAreas" :key="a" class="bi-missing-item">{{ a }}</li>
+            </ul>
+            <p v-if="!hasPerm('device_area:create')" class="bi-no-perm">
+              你没有新增分区的权限，无法继续导入。请联系管理员。
+            </p>
+          </div>
+          <div class="bi-footer">
+            <button class="bi-btn-cancel" type="button" @click="handleAreaCancel">取消导入</button>
+            <div class="bi-footer-spacer"></div>
+            <button
+              v-if="hasPerm('device_area:create')"
+              class="bi-btn-confirm"
+              type="button"
+              @click="handleAreaConfirm"
+            >
+              创建并继续导入
+            </button>
+            <span v-else class="bi-no-perm-btn">无权限</span>
           </div>
         </div>
       </div>
@@ -978,5 +1082,43 @@ onUnmounted(() => {
   .bi-footer-spacer {
     display: none;
   }
+}
+
+/* ── 分区确认弹窗 ── */
+.bi-missing-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+}
+.bi-missing-item {
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  background: rgba(255, 167, 38, 0.08);
+  border: 1px solid rgba(255, 167, 38, 0.2);
+  border-radius: 6px;
+  color: #e67e22;
+  font-size: 14px;
+  font-weight: 600;
+}
+.bi-missing-item::before {
+  content: '! ';
+  font-weight: 800;
+}
+.bi-no-perm {
+  color: #e74c3c;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  margin: 8px 0 0;
+}
+.bi-no-perm-btn {
+  display: inline-block;
+  padding: 8px 20px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #999;
+  background: #eee;
+  cursor: not-allowed;
 }
 </style>

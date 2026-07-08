@@ -86,9 +86,9 @@ export function triggerEdgeSimulation() {
   return request.post('/api/dashboard/edge/trigger', null, { timeout: 30000 })
 }
 
-export function fetchEdgeRecent() {
+export function fetchEdgeRecent(params = {}) {
   return safeCall(
-    () => request.get('/api/dashboard/edge/recent'),
+    () => request.get('/api/dashboard/edge/recent', { params }),
     [],
     'GET /api/dashboard/edge/recent'
   )

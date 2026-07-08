@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { fetchDashboardStats, fetchEnergyTrend, fetchDistrictData, fetchEdgeStatus, triggerEdgeSimulation, fetchEdgeRecent, triggerEnergyCalc, genTestData } from '../api/dashboard.js'
 import { fetchAllDevicesForMap } from '../api/devices.js'
 import { useChartScale } from '../composables/useChartScale.js'
@@ -20,6 +20,10 @@ let trendData = null
 let stopScaleWatch = null
 const calcLoading = ref(false)
 const genLoading = ref(false)
+
+// 边缘AI 展开/筛选
+const edgeExpanded = ref(false)
+const edgeDeviceFilter = ref('')
 
 // 地图
 const allDevices = ref([])
@@ -118,9 +122,18 @@ async function handleGenData() {
   } finally { genLoading.value = false }
 }
 
+function buildEdgeParams() {
+  const params = { limit: edgeExpanded.value ? 50 : 20 }
+  if (edgeDeviceFilter.value) params.deviceId = edgeDeviceFilter.value
+  return params
+}
+
 async function refreshEdgeStatus() {
   try {
-    const [s, r] = await Promise.all([fetchEdgeStatus(), fetchEdgeRecent()])
+    const [s, r] = await Promise.all([
+      fetchEdgeStatus(),
+      fetchEdgeRecent(buildEdgeParams()),
+    ])
     edgeStatus.value = s.data || {}
     edgeRecent.value = r.data || []
   } catch {}
@@ -131,16 +144,27 @@ async function refreshLiveData() {
     const [s, e, r] = await Promise.all([
       fetchDashboardStats(),
       fetchEdgeStatus(),
-      fetchEdgeRecent(),
+      fetchEdgeRecent(buildEdgeParams()),
     ])
     stats.value = s.data || {}
     edgeStatus.value = e.data || {}
     edgeRecent.value = r.data || []
-  } catch {}
+  } catch (err) {
+    console.warn('[Dashboard] Auto-refresh failed:', err.message || err)
+  }
 }
 
-// 统计卡片 + 边缘AI 每 45 秒自动刷新（在 setup 顶层注册，不在 onMounted 内）
-useAutoRefresh(refreshLiveData, { interval: 45000 })
+// 统计卡片 + 边缘AI 每 30 秒自动刷新 + 首次立即执行
+useAutoRefresh(refreshLiveData, { interval: 30000, immediateFirst: true })
+
+function toggleEdgeExpand() {
+  edgeExpanded.value = !edgeExpanded.value
+  refreshEdgeStatus()
+}
+
+watch(edgeDeviceFilter, () => {
+  refreshEdgeStatus()
+})
 
 async function handleTriggerEdge() {
   edgeLoading.value = true
@@ -288,6 +312,7 @@ onUnmounted(() => {
               </div>
               <div class="stat-hint" :class="edgeStatus.hitCount > 0 ? 'good' : ''">
                 {{ edgeStatus.hitCount > 0 ? '命中 ' + edgeStatus.hitCount + ' 次' : '模拟运行中' }}
+                <span v-if="edgeStatus.lastSimulatedAt" class="stat-hint-time">最后: {{ edgeStatus.lastSimulatedAt.replace('T',' ').slice(5,16) }}</span>
               </div>
             </div>
           </div>
@@ -298,15 +323,43 @@ onUnmounted(() => {
       <section id="sec-edge" class="dp-section">
         <h2 class="section-title">边缘AI决策</h2>
         <div class="block-card">
-          <div class="edge-log-list" v-if="edgeRecent.length">
-            <div v-for="(r, i) in edgeRecent.slice(0, 6)" :key="i" class="edge-log-item">
+          <!-- 工具栏 -->
+          <div class="edge-toolbar">
+            <el-select
+              v-model="edgeDeviceFilter"
+              class="edge-filter-select"
+              placeholder="全部设备"
+              clearable
+              filterable
+              size="small"
+              @change="refreshEdgeStatus()"
+            >
+              <el-option
+                v-for="d in allDevices"
+                :key="d.deviceId"
+                :label="`${d.name || d.deviceId} (${d.deviceId})`"
+                :value="d.deviceId"
+              />
+            </el-select>
+            <button class="edge-expand-btn" @click="toggleEdgeExpand">
+              {{ edgeExpanded ? '收起' : '展开更多' }}
+            </button>
+          </div>
+
+          <div class="edge-log-list" :class="{ expanded: edgeExpanded }" v-if="edgeRecent.length">
+            <div v-for="(r, i) in edgeRecent" :key="i" class="edge-log-item">
               <span class="el-time">{{ r.createTime ? r.createTime.replace('T',' ').slice(5,16) : '--' }}</span>
               <span class="el-device">{{ r.deviceId }}</span>
               <span :class="r.matchedPolicy ? 'el-match' : 'el-nomatch'">{{ r.matchedPolicy || '未命中' }}</span>
               <span class="el-action">{{ r.actionTaken || '—' }}</span>
+              <span class="el-tag" :class="r.result === 'EDGE_MATCH_EXECUTED' ? 'hit' : 'miss'">
+                {{ r.result === 'EDGE_MATCH_EXECUTED' ? '命中' : '未命中' }}
+              </span>
             </div>
           </div>
-          <div v-else class="block-empty">暂无边缘决策记录</div>
+          <div v-else class="block-empty">
+            {{ edgeDeviceFilter ? '该设备暂无边缘决策记录' : '暂无边缘决策记录' }}
+          </div>
         </div>
       </section>
 
@@ -439,6 +492,7 @@ onUnmounted(() => {
 .stat-hint { font-size: 15px; }
 .stat-hint.online { color: #4caf82; }
 .stat-hint.good { color: #4caf82; }
+.stat-hint-time { display: block; font-size: 11px; color: rgba(140,190,220,0.45); margin-top: 2px; }
 .stat-hint.warn-hint { color: rgba(239,83,80,0.8); }
 
 /* ── 通用卡片 ── */
@@ -449,16 +503,33 @@ onUnmounted(() => {
 .block-empty { color: rgba(140,190,220,0.4); font-size: 17px; text-align: center; padding: 28px 0; }
 
 /* ── 边缘AI ── */
-.edge-log-list { display: flex; flex-direction: column; gap: 8px; }
-.edge-log-item {
-  display: flex; align-items: center; gap: 16px; padding: 14px 16px;
-  background: rgba(0,30,70,0.3); border-radius: 8px; font-size: 16px;
+.edge-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.edge-filter-select { flex: 1; max-width: 340px; }
+.edge-expand-btn {
+  height: 34px; padding: 0 16px; white-space: nowrap;
+  background: rgba(0,100,180,0.2); border: 1px solid rgba(0,120,200,0.25);
+  border-radius: 6px; color: rgba(140,210,230,0.8); font-size: 13px;
+  font-weight: 600; cursor: pointer; transition: all 0.2s;
 }
-.el-time { color: rgba(140,190,220,0.5); font-family: monospace; min-width: 70px; }
-.el-device { color: rgba(140,190,220,0.75); font-weight: 600; min-width: 70px; }
-.el-match { color: #4caf82; flex: 1; }
-.el-nomatch { color: rgba(140,190,220,0.35); flex: 1; }
-.el-action { color: rgba(200,220,240,0.6); font-family: monospace; }
+.edge-expand-btn:hover { background: rgba(0,120,200,0.35); border-color: rgba(77,208,225,0.5); color: #4dd0e1; }
+
+.edge-log-list { display: flex; flex-direction: column; gap: 8px; }
+.edge-log-list.expanded { max-height: 520px; overflow-y: auto; }
+.edge-log-item {
+  display: flex; align-items: center; gap: 14px; padding: 12px 14px;
+  background: rgba(0,30,70,0.3); border-radius: 8px; font-size: 15px;
+}
+.el-time { color: rgba(140,190,220,0.5); font-family: monospace; min-width: 68px; font-size: 13px; }
+.el-device { color: rgba(140,190,220,0.75); font-weight: 600; min-width: 64px; font-size: 13px; }
+.el-match { color: #4caf82; flex: 1; font-size: 14px; }
+.el-nomatch { color: rgba(140,190,220,0.35); flex: 1; font-size: 14px; }
+.el-action { color: rgba(200,220,240,0.6); font-family: monospace; font-size: 13px; }
+.el-tag {
+  font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px;
+  flex-shrink: 0;
+}
+.el-tag.hit { background: rgba(76,175,130,0.15); color: #4caf82; }
+.el-tag.miss { background: rgba(140,190,220,0.08); color: rgba(140,190,220,0.4); }
 
 /* ── 图表 ── */
 .chart-area { width: 100%; height: 420px; }

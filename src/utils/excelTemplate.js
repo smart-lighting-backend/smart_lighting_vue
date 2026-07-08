@@ -130,8 +130,8 @@ export function validateAllRows(rows, existingDeviceIds = new Set()) {
 
 export function rowsToPayload(rows) {
   return rows.map(row => {
-    const lng = row.longitude || ''
-    const lat = row.latitude || ''
+    const lng = roundCoord(row.longitude)
+    const lat = roundCoord(row.latitude)
     return {
       deviceId: row.deviceId,
       name: row.name || undefined,
@@ -354,12 +354,14 @@ function parseRows(rows) {
     const row = normalizedRows[i]
     if (!row || row.every(cell => cellToText(cell) === '')) continue
 
+    const rawLng = getMappedValue(row, columnMap, 'longitude');
+    const rawLat = getMappedValue(row, columnMap, 'latitude');
     const device = {
       deviceId: getMappedValue(row, columnMap, 'deviceId'),
       name: getMappedValue(row, columnMap, 'name'),
       area: getMappedValue(row, columnMap, 'area'),
-      longitude: getMappedValue(row, columnMap, 'longitude'),
-      latitude: getMappedValue(row, columnMap, 'latitude'),
+      longitude: roundCoord(rawLng),
+      latitude: roundCoord(rawLat),
       ratedPower: getMappedValue(row, columnMap, 'ratedPower'),
       _row: i + 1,
     }
@@ -390,6 +392,13 @@ function getMappedValue(row, columnMap, key) {
 function cellToText(value) {
   if (value === null || value === undefined) return ''
   return String(value).replace(/^\ufeff/, '').trim()
+}
+
+function roundCoord(value) {
+  if (!value) return ''
+  const num = parseFloat(value)
+  if (Number.isNaN(num)) return ''
+  return String(Math.round(num * 1e6) / 1e6)
 }
 
 function normalizeHeader(value) {

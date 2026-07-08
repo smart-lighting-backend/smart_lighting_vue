@@ -39,3 +39,8 @@ export function updateArea(id, data) {
 export function deleteArea(id) {
   return request.delete(`/api/device-areas/${id}`)
 }
+
+/** 批量按名称创建区域（幂等） */
+export function batchCreateAreas(names) {
+  return request.post('/api/device-areas/batch', names)
+}

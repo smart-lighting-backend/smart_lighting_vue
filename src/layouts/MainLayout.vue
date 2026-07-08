@@ -47,35 +47,28 @@ async function loadMenus() {
     loadingMenus.value = true
   }
   try {
-    console.log('[Menu] Loading menus...')
     const res = await fetchVisibleMenus()
-    console.log('[Menu] API response:', JSON.stringify(res, null, 2))
-    
+
     let menuData = res
     if (res && typeof res === 'object' && 'data' in res) {
       menuData = res.data
     }
-    
+
     if (menuData && Array.isArray(menuData) && menuData.length > 0) {
-      console.log('[Menu] Using API data, count:', menuData.length)
       menus.value = menuData.sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
       const inLocal = !!localStorage.getItem('smart_light_token')
       saveMenus(menus.value, inLocal)
     } else {
       const cached = getMenus()
-      console.log('[Menu] API data empty, trying cache:', cached?.length || 0)
       if (cached && cached.length > 0) {
         menus.value = cached.sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
       } else {
-        console.log('[Menu] Cache empty, using fallback menus')
         menus.value = FALLBACK_MENUS
       }
     }
-    console.log('[Menu] Final menus:', JSON.stringify(menus.value, null, 2))
     filterAdminMenus()
     autoExpandMenus()
   } catch (error) {
-    console.warn('[Menu] Failed to fetch menus from API, using cache or fallback', error)
     const cached = getMenus()
     if (cached && cached.length > 0) {
       menus.value = cached.sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))

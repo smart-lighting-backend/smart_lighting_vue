@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import {
   ElButton, ElDialog, ElForm, ElFormItem, ElInput,
   ElSelect, ElOption, ElMessage, ElTree, ElMessageBox,
@@ -384,7 +384,14 @@ async function handleDelete(node) {
   }
 }
 
-onMounted(loadTree)
+onMounted(() => {
+  loadTree()
+  window.addEventListener('area-created', loadTree)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('area-created', loadTree)
+})
 </script>
 
 <template>
