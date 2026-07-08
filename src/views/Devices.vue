@@ -995,7 +995,7 @@ async function batchDeleteSelected() {
           <ElInput
             v-model.trim="createForm.deviceId"
             :disabled="createDialogMode === 'edit'"
-            placeholder="如 SL-007"
+            placeholder="如 SL_007"
             maxlength="50"
             show-word-limit
             @blur="onDeviceIdBlur"
