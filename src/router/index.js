@@ -110,6 +110,12 @@ const routes = [
         component: () => import('../views/MenuManagement.vue'),
         meta: { title: '菜单管理', adminOnly: true },
       },
+      {
+        path: 'system/role',
+        name: 'RoleManagement',
+        component: () => import('../views/RoleManagement.vue'),
+        meta: { title: '角色管理', adminOnly: true },
+      },
       // ── 旧路由重定向 → 统一路径规范 ──────────────────────────────────────────
       {
         path: 'device/list',
