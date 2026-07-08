@@ -26,7 +26,7 @@ const totalPermCount = ref(0)
 const loadRoles = async () => {
   try {
     const res = await fetchRoleList()
-    roleList.value = res?.code === 200 ? (res.data || []) : (res || [])
+    roleList.value = (res?.code === 200 ? (res.data || []) : (res || [])).filter(r => r.code !== 'SUPER_ADMIN')
   } catch {
     roleList.value = []
   }

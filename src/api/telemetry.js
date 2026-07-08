@@ -86,33 +86,46 @@ export function fetchLatestTelemetry(deviceId) {
 }
 
 // ── 历史遥测 POST /api/telemetry/history ─────────────────────────────────
+function computeTimeRangeParams(timeRange) {
+  const now = new Date()
+  let from = new Date()
+  switch (timeRange) {
+    case '24h': from.setHours(from.getHours() - 24); break
+    case '7d':  from.setDate(from.getDate() - 7); break
+    default:    from.setHours(from.getHours() - 1); break  // 1h
+  }
+  const pad = (n) => String(n).padStart(2, '0')
+  const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  return { collectedAtFrom: fmt(from), collectedAtTo: fmt(now) }
+}
+
+function formatTime(collectedAt) {
+  if (!collectedAt) return '--'
+  // 数组格式（MySQL datetime）: [2026, 7, 8, 15, 30, 0]
+  if (Array.isArray(collectedAt) && collectedAt.length >= 6) {
+    const [y, m, d, h, min, s] = collectedAt
+    const pad = (n) => String(n).padStart(2, '0')
+    return `${y}-${pad(m)}-${pad(d)} ${pad(h)}:${pad(min)}:${pad(s)}`
+  }
+  // 字符串格式（TDengine / Jackson LocalDateTime）: "2026-07-08T15:30:00"
+  const s = String(collectedAt).replace('T', ' ').substring(0, 19)
+  return s || '--'
+}
+
 export function fetchTelemetryHistory(params) {
   const { deviceId, timeRange = '1h' } = params
+  const body = { deviceId, ...computeTimeRangeParams(timeRange), page: 1, size: 500 }
   return safeCall(
     async () => {
-      const res = await request.post('/api/telemetry/history', { deviceId })
-      // 后端返回 MyBatis-Plus IPage：{ records, total, size, current, pages }
+      const res = await request.post('/api/telemetry/history', body)
       return {
         code: 200,
         msg: 'success',
         data: {
-          list:  (res.data?.records || []).map(r => {
-            let formattedTime = '--'
-            if (Array.isArray(r.collectedAt) && r.collectedAt.length >= 6) {
-              const [y, m, d, h, min, s] = r.collectedAt
-              const pad = (n) => String(n).padStart(2, '0')
-              formattedTime = `${y}-${pad(m)}-${pad(d)} ${pad(h)}:${pad(min)}:${pad(s)}`
-            } else if (typeof r.collectedAt === 'string') {
-              formattedTime = r.collectedAt.replace('T', ' ')
-              if (formattedTime.indexOf('.') > -1) {
-                formattedTime = formattedTime.substring(0, formattedTime.indexOf('.'))
-              }
-            }
-            return {
-              ...r,
-              time: formattedTime
-            }
-          }),
+          list:  (res.data?.records || []).map(r => ({
+            ...r,
+            time: formatTime(r.collectedAt)
+          })),
           total: res.data?.total || 0,
         }
       }
