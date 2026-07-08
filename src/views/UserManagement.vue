@@ -3,8 +3,8 @@ import { ref, onMounted } from 'vue'
 import {
   ElInput, ElButton, ElTable, ElTableColumn, ElTag, ElCard, ElDialog, ElForm, ElFormItem, ElSelect, ElOption, ElMessageBox, ElPagination, ElNotification
 } from 'element-plus'
-import { Search, Plus, Edit, Delete, CircleClose, CircleCheck, WarningFilled } from '@element-plus/icons-vue'
-import { fetchUserList, fetchAllRoles, createUser, updateUser, disableUser, deleteUser } from '../api/user'
+import { Search, Plus, Edit, Delete, CircleClose, CircleCheck, WarningFilled, Download } from '@element-plus/icons-vue'
+import { fetchUserList, fetchAllRoles, createUser, updateUser, disableUser, deleteUser, batchDeleteUsers, exportUsers } from '../api/user'
 import { useUserInfo } from '../composables/useUserInfo.js'
 
 const { hasPerm } = useUserInfo()
@@ -16,6 +16,7 @@ const searchForm = ref({
   department: ''
 })
 
+const selectedRows = ref([])
 const userList = ref([])
 const roleList = ref([])
 const loading = ref(false)
@@ -76,10 +77,16 @@ const buildSubmitPayload = () => {
 }
 
 const rules = {
-  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
+  username: [
+    { required: true, message: '请输入用户名', trigger: 'blur' },
+    { pattern: /^[a-zA-Z0-9_]+$/, message: '用户名只能包含字母、数字和下划线', trigger: 'change' }
+  ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
     { min: 8, message: '密码至少 8 位', trigger: 'blur' }
+  ],
+  phone: [
+    { pattern: /^1[3-9]\d{9}$/, message: '请输入正确的11位手机号', trigger: 'blur' }
   ],
   roleId: [{ required: true, message: '请选择角色', trigger: 'change' }]
 }
@@ -93,6 +100,8 @@ const getRoleTag = (roleCode) => {
     default: return { type: 'info', text: '普通用户' }
   }
 }
+
+const isSuperAdmin = (row) => row.roleCode === 'SUPER_ADMIN'
 
 const loadRoles = async () => {
   try {
@@ -219,6 +228,60 @@ const handleDelete = (row) => {
   }).catch(() => {})
 }
 
+function handleSelectionChange(rows) {
+  selectedRows.value = rows
+}
+
+async function handleBatchDelete() {
+  const ids = selectedRows.value.map(r => r.id).filter(Boolean)
+  if (!ids.length) {
+    ElNotification.warning({ title: '未选择用户', message: '请先勾选需要删除的用户' })
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定要批量删除选中的 ${ids.length} 个用户吗？删除后数据将无法恢复。`,
+      '批量删除确认',
+      { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'error' }
+    )
+    await batchDeleteUsers(ids)
+    ElNotification.success({ title: '批量删除成功', message: `已删除 ${ids.length} 个用户` })
+    selectedRows.value = []
+    loadUsers()
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElNotification.error({ title: '批量删除失败', message: '' })
+    }
+  }
+}
+
+async function handleExportUsers() {
+  try {
+    const res = await exportUsers(searchForm.value)
+    // res 是 axios 响应对象，Blob 在 res.data 中
+    const blob = res?.data || res
+    if (!(blob instanceof Blob)) {
+      ElNotification.error({ title: '导出失败', message: '后端返回格式异常' })
+      return
+    }
+    // 从 Content-Disposition 取文件名，否则用默认格式
+    const disposition = res?.headers?.['content-disposition'] || ''
+    const match = disposition.match(/filename\*?=(?:UTF-8'')?([^;\s]+)/i)
+    const filename = match
+      ? decodeURIComponent(match[1])
+      : `users_${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}.xlsx`
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+    ElNotification.success({ title: '导出成功', message: `文件 ${filename} 已下载` })
+  } catch (error) {
+    ElNotification.error({ title: '导出失败', message: '' })
+  }
+}
+
 const formatDateTime = (dateRaw) => {
   if (!dateRaw) return '--';
   let dateArr = dateRaw;
@@ -270,13 +333,26 @@ onMounted(() => {
         <ElFormItem>
           <ElButton type="primary" @click="handleSearch"><Search /> 查询</ElButton>
           <ElButton @click="handleReset">重置</ElButton>
+          <ElButton @click="handleExportUsers"><Download /> 导出</ElButton>
           <ElButton v-if="hasPerm('user:create')" type="success" @click="handleAdd"><Plus /> 新增用户</ElButton>
         </ElFormItem>
       </ElForm>
     </div>
 
+    <div class="batch-bar" v-if="selectedRows.length > 0">
+      <span class="batch-bar-info">已选 <strong>{{ selectedRows.length }}</strong> 人</span>
+      <button v-if="hasPerm('user:delete')" class="batch-bar-btn danger-btn" @click="handleBatchDelete">
+        <Delete style="width:13px;height:13px" /> 批量删除
+      </button>
+      <button class="batch-bar-btn export-btn" @click="handleExportUsers">
+        <Download style="width:13px;height:13px" /> 导出用户
+      </button>
+      <button class="batch-bar-btn cancel-btn" @click="selectedRows = []">取消选择</button>
+    </div>
+
     <div class="user-content" v-loading="loading">
-      <ElTable :data="userList" border stripe style="width: 100%" @sort-change="() => {}">
+      <ElTable :data="userList" border stripe style="width: 100%" @sort-change="() => {}" @selection-change="handleSelectionChange">
+        <ElTableColumn type="selection" width="50" />
         <template #empty>
           <div class="empty-illust">
             <svg viewBox="0 0 120 80" fill="none" width="100" height="66">
@@ -317,13 +393,16 @@ onMounted(() => {
         </ElTableColumn>
         <ElTableColumn label="操作" width="230" fixed="right">
           <template #default="{ row }">
-            <ElButton v-if="hasPerm('user:update')" type="primary" link @click="handleEdit(row)"><Edit /> 编辑</ElButton>
-            <ElButton v-if="hasPerm('user:update')" :type="row.enabled === false ? 'success' : 'warning'" link @click="handleToggleEnabled(row)">
-              <CircleCheck v-if="row.enabled === false" />
-              <CircleClose v-else />
-              {{ row.enabled === false ? '启用' : '停用' }}
-            </ElButton>
-            <ElButton v-if="hasPerm('user:delete')" type="danger" link @click="handleDelete(row)"><Delete /> 删除</ElButton>
+            <template v-if="!isSuperAdmin(row)">
+              <ElButton v-if="hasPerm('user:update')" type="primary" link @click="handleEdit(row)"><Edit /> 编辑</ElButton>
+              <ElButton v-if="hasPerm('user:update')" :type="row.enabled === false ? 'success' : 'warning'" link @click="handleToggleEnabled(row)">
+                <CircleCheck v-if="row.enabled === false" />
+                <CircleClose v-else />
+                {{ row.enabled === false ? '启用' : '停用' }}
+              </ElButton>
+              <ElButton v-if="hasPerm('user:delete')" type="danger" link @click="handleDelete(row)"><Delete /> 删除</ElButton>
+            </template>
+            <span v-else class="super-admin-badge">不可操作</span>
           </template>
         </ElTableColumn>
       </ElTable>
@@ -434,6 +513,42 @@ onMounted(() => {
   box-shadow: 0 18px 40px rgba(30, 86, 130, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.92) !important;
 }
 
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  margin-bottom: 16px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(0, 141, 230, 0.16);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(30, 86, 130, 0.08);
+}
+.batch-bar-info {
+  font-size: 13px;
+  color: #1d3148;
+  font-weight: 600;
+}
+.batch-bar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  border: 1px solid rgba(0, 141, 230, 0.18);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: rgba(255,255,255,0.9);
+  color: #1d3148;
+  transition: all 0.18s;
+}
+.batch-bar-btn:hover { background: rgba(232, 246, 255, 0.9); border-color: rgba(0,141,230,0.3); }
+.danger-btn { color: #c62f36; border-color: rgba(198,47,54,0.22); }
+.danger-btn:hover { background: rgba(229,72,77,0.08); border-color: rgba(198,47,54,0.3); }
+.export-btn { color: #006fc2; }
+.cancel-btn { margin-left: auto; color: #60748a; font-weight: 500; }
+
 .form-hint {
   font-size: 12px;
   color: #40566f;
@@ -527,6 +642,18 @@ onMounted(() => {
 
 :deep(.el-button.is-link.el-button--danger) {
   color: #c62f36 !important;
+}
+
+.super-admin-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #60748a;
+  background: rgba(96, 116, 138, 0.1);
+  border: 1px solid rgba(96, 116, 138, 0.18);
+  border-radius: 4px;
+  cursor: default;
 }
 
 /* Empty illustration */

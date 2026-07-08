@@ -83,3 +83,27 @@ export async function fetchAllRoles() {
     throw error
   }
 }
+
+/**
+ * 批量删除用户
+ */
+export async function batchDeleteUsers(ids) {
+  try {
+    const res = await request.delete('/api/users/batch', { data: ids })
+    return res
+  } catch (error) {
+    throw error
+  }
+}
+
+/**
+ * 导出用户数据（返回 Blob）
+ */
+export async function exportUsers(query = {}) {
+  try {
+    const res = await request.post('/api/users/export', query, { responseType: 'blob' })
+    return res
+  } catch (error) {
+    throw error
+  }
+}
