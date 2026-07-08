@@ -115,14 +115,23 @@ function formatTime(collectedAt) {
 export function fetchTelemetryHistory(params) {
   const { deviceId, timeRange = '1h' } = params
   const body = { deviceId, ...computeTimeRangeParams(timeRange), page: 1, size: 500 }
+  console.log('[TelemetryHistory] Request:', JSON.stringify(body))
   return safeCall(
     async () => {
       const res = await request.post('/api/telemetry/history', body)
+      const records = res.data?.records || []
+      console.log('[TelemetryHistory] Response: total=' + (res.data?.total || 0) + ', records=' + records.length)
+      if (records.length > 0) {
+        console.log('[TelemetryHistory] Sample:', JSON.stringify({ time: formatTime(records[0].collectedAt), collectedAt: records[0].collectedAt }))
+      } else {
+        console.warn('[TelemetryHistory] Empty result for', deviceId, '— using mock')
+        throw new Error('Empty telemetry history')
+      }
       return {
         code: 200,
         msg: 'success',
         data: {
-          list:  (res.data?.records || []).map(r => ({
+          list:  records.map(r => ({
             ...r,
             time: formatTime(r.collectedAt)
           })),
