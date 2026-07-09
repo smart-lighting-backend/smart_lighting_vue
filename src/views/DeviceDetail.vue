@@ -1,4 +1,5 @@
 <script setup>import { ref, onMounted, onBeforeUnmount, onActivated, onDeactivated, computed, watch } from 'vue';
+
 import { useRoute, useRouter } from 'vue-router';
 import { ElButton, ElCard, ElTag, ElRadioGroup, ElRadioButton, ElRow, ElCol, ElSlider, ElTable, ElTableColumn, ElMessage, ElMessageBox } from 'element-plus';
 import { ArrowLeft, Lightning, Sunny, Moon, Refresh, Warning } from '@element-plus/icons-vue';
@@ -10,11 +11,13 @@ import { fetchLatestTelemetry, fetchTelemetryHistory } from '../api/telemetry.js
 import { sendControlCommand, getControlHistory } from '../api/control.js';
 import { useUserInfo } from '../composables/useUserInfo.js';
 import { useAutoRefresh } from '../composables/useAutoRefresh.js';
+import { useMqtt } from '../composables/useMqtt.js';
 import { parseLatestData, resolveManualControlState } from '../utils/manualControlState.js';
 const { hasPerm } = useUserInfo();
 const route = useRoute();
 const router = useRouter();
 const deviceId = ref('');
+const perceptionPanelRef = ref(null);
 const deviceInfo = ref(null);
 const latestTelemetry = ref(null);
 const historyData = ref([]);
@@ -641,6 +644,22 @@ const loadControlHistory = async () => {
 };
 onMounted(async () => {
  deviceId.value = route.params.id;
+ const { subscribe: subDetail } = useMqtt()
+ subDetail(`streetlight/${deviceId.value}/telemetry`, (data) => {
+   if (data) latestTelemetry.value = data
+ })
+ subDetail(`streetlight/${deviceId.value}/heartbeat`, () => {
+   if (deviceInfo.value) deviceInfo.value.status = 1
+ })
+ subDetail(`system/alarms`, () => {
+   perceptionPanelRef.value?.load()
+ })
+ subDetail(`streetlight/${deviceId.value}/vision/event`, () => {
+   perceptionPanelRef.value?.load()
+ })
+ subDetail(`streetlight/${deviceId.value}/voice/event`, () => {
+   perceptionPanelRef.value?.load()
+ })
  window.addEventListener(MANUAL_CONTROL_STATE_EVENT, handleManualControlStateChange);
  await loadDeviceInfo();
  loadHealth();
@@ -666,10 +685,10 @@ onMounted(async () => {
        latestTelemetry.value = res2.data
      }
    } catch {}
- }, { interval: 12000 })
+ }, { interval: 300000 })
 });
 
-// 路由参数变化时（如 /devices/SL-001 → /devices/SL-002）重新加载
+// 路由参数变化时（如 /devices/SL_001 → /devices/SL_002）重新加载
 watch(() => route.params.id, async (newId) => {
   if (newId && newId !== deviceId.value) {
     deviceId.value = newId;
@@ -841,7 +860,7 @@ onBeforeUnmount(() => {
       </ElCard>
 
       <!-- 融合感知面板 -->
-      <PerceptionPanel v-if="deviceId" :deviceId="deviceId" />
+      <PerceptionPanel v-if="deviceId" ref="perceptionPanelRef" :deviceId="deviceId" :telemetry="latestTelemetry" />
 
       <div class="section-title">
         <h3>实时遥测数据</h3>

@@ -3,7 +3,11 @@ import { ref, watch } from 'vue'
 import { ElCard, ElTag } from 'element-plus'
 import { fetchDevicePerception } from '../api/devices.js'
 
-const props = defineProps({ deviceId: { type: String, required: true } })
+const props = defineProps({
+  deviceId: { type: String, required: true },
+  telemetry: { type: Object, default: null },
+})
+
 const data = ref(null)
 
 async function load() {
@@ -18,8 +22,12 @@ async function load() {
 
 watch(() => props.deviceId, load, { immediate: true })
 
+// 暴露 load 供父组件调用
+defineExpose({ load })
+
 function telItem(label, key, unit) {
-  const t = data.value?.telemetry
+  // 优先用父组件传入的实时遥测
+  const t = props.telemetry || data.value?.telemetry
   const val = t?.[key] !== null && t?.[key] !== undefined ? t[key] : '--'
   return { label, value: val, unit }
 }
@@ -151,23 +159,23 @@ function alarmLevelTag(level) {
 
 /* 8格传感器网格 */
 .sensor-grid {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
-  margin-bottom: 16px;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+  margin-bottom: 18px;
 }
 .sensor-cell {
   background: rgba(0,30,70,0.4);
   border: 1px solid rgba(0,120,200,0.1);
-  border-radius: 8px;
-  padding: 10px 12px;
+  border-radius: 10px;
+  padding: 14px 16px;
   text-align: center;
   transition: border-color 0.2s;
 }
 .sensor-cell:hover { border-color: rgba(77,208,225,0.2); }
-.sc-icon { font-size: 16px; margin-bottom: 2px; }
-.sc-label { font-size: 10px; color: rgba(140,190,220,0.5); margin-bottom: 2px; }
-.sc-value { font-size: 16px; font-weight: 600; color: rgba(200,220,240,0.9); }
-.sc-unit { font-size: 10px; color: rgba(140,190,220,0.4); }
-.health-val { font-size: 20px !important; }
+.sc-icon { font-size: 20px; margin-bottom: 4px; }
+.sc-label { font-size: 11px; color: rgba(140,190,220,0.5); margin-bottom: 4px; }
+.sc-value { font-size: 18px; font-weight: 600; color: rgba(200,220,240,0.9); }
+.sc-unit { font-size: 11px; color: rgba(140,190,220,0.4); }
+.health-val { font-size: 22px !important; }
 .health-val.is-good { color: #4caf50; }
 .health-val.is-bad { color: #f44336; }
 

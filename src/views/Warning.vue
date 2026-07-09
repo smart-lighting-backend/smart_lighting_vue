@@ -3,10 +3,11 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchAlarmPage, fetchAlarmExportList, handleAlarm, ALARM_STATUS_MAP, ALARM_LEVEL_MAP, ALARM_TYPE_MAP } from '../api/warnings.js'
-import { faultSimulate } from '../api/devices.js'
+import { faultSimulate, offlineSimulate } from '../api/devices.js'
 import { buildAlarmCsvContent, formatAlarmTime } from '../utils/alarmExport.js'
 import { useAutoRefresh } from '../composables/useAutoRefresh.js'
 import { useUserInfo } from '../composables/useUserInfo.js'
+import { useMqtt } from '../composables/useMqtt.js'
 
 const route = useRoute()
 
@@ -147,6 +148,8 @@ async function handleConfirm(alarm) {
 }
 
 const simulating = ref(false)
+const offlining = ref(false)
+
 async function simulateFault() {
   simulating.value = true
   try {
@@ -160,6 +163,19 @@ async function simulateFault() {
   }
 }
 
+async function simulateOffline() {
+  offlining.value = true
+  try {
+    const res = await offlineSimulate()
+    ElMessage.success(`离线模拟成功 — ${res.data.deviceId} (${res.data.deviceName}) 已标记为离线，30s 内心跳恢复`)
+    setTimeout(() => loadData(), 1500)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || e?.message || '离线模拟失败')
+  } finally {
+    offlining.value = false
+  }
+}
+
 // URL 参数预设筛选（同步执行，在 setup 阶段而非 onMounted 中）
 if (route.query.status && statusOptions.some(o => o.value === route.query.status)) {
   filters.status = route.query.status
@@ -169,12 +185,15 @@ if (route.query.type && typeOptions.some(o => o.value === route.query.type)) {
 }
 
 useAutoRefresh(loadData, {
-  interval: 25000,
+  interval: 300000,
   isSensitive: () => exporting.value || filters.startTime || filters.endTime,
 })
 
+const { subscribe } = useMqtt()
+
 onMounted(() => {
   loadData()
+  subscribe('system/alarms', () => loadData())
 })
 </script>
 
@@ -190,6 +209,10 @@ onMounted(() => {
         <button class="fault-btn" :disabled="simulating" @click="simulateFault">
           <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v2m0 4h.01M5.07 19H19a2 2 0 001.73-3L13.73 4.99a2 2 0 00-3.46 0L3.34 16A2 2 0 005.07 19z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           {{ simulating ? '注入中...' : '模拟故障' }}
+        </button>
+        <button class="offline-btn" :disabled="offlining" @click="simulateOffline">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M18.36 5.64a9 9 0 11-12.72 0M12 2v8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="2" y1="2" x2="22" y2="22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          {{ offlining ? '标记中...' : '模拟离线' }}
         </button>
         <button class="export-btn" :disabled="exporting" @click="handleExport">
           <svg viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -338,6 +361,10 @@ onMounted(() => {
 .fault-btn svg { width: 15px; height: 15px; }
 .fault-btn:hover { background: rgba(200,80,30,0.3); border-color: rgba(255,150,60,0.5); color: #ffa040; box-shadow: 0 0 12px rgba(255,100,30,0.2); }
 .fault-btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+.offline-btn { display: flex; align-items: center; gap: 6px; padding: 8px 16px; background: rgba(140,140,170,0.2); border: 1px solid rgba(150,150,200,0.35); border-radius: 8px; color: rgba(180,180,210,0.9); font-size: 13px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+.offline-btn svg { width: 15px; height: 15px; }
+.offline-btn:hover { background: rgba(140,140,170,0.3); border-color: rgba(170,170,220,0.5); color: #c0c0e0; box-shadow: 0 0 12px rgba(140,140,200,0.2); }
+.offline-btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
 
 /* Filter bar */
 .filter-bar { background: rgba(8,20,45,0.8); border: 1px solid rgba(0,120,200,0.15); border-radius: 10px; padding: 16px 20px; display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }

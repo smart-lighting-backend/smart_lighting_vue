@@ -67,11 +67,11 @@ function buildMockResponse(deviceId, command, params) {
 }
 
 const MOCK_HISTORY = [
-  { id: 'CTL001', device_id: 'SL-001', command: 'turn_on',  command_label: '开灯',   params: {},                    status: 'success', status_label: '执行成功', message: '设备已响应，灯光已开启',        created_at: '2026-07-02 14:30:00', executed_at: '2026-07-02 14:30:05' },
-  { id: 'CTL002', device_id: 'SL-001', command: 'dim',      command_label: '调光',   params: { brightness: 75 },    status: 'success', status_label: '执行成功', message: '设备已响应，亮度已调整为 75%', created_at: '2026-07-02 14:25:00', executed_at: '2026-07-02 14:25:03' },
-  { id: 'CTL003', device_id: 'SL-001', command: 'turn_off', command_label: '关灯',   params: {},                    status: 'success', status_label: '执行成功', message: '设备已响应，灯光已关闭',        created_at: '2026-07-02 10:00:00', executed_at: '2026-07-02 10:00:04' },
-  { id: 'CTL004', device_id: 'SL-001', command: 'restart',  command_label: '重启',   params: {},                    status: 'success', status_label: '执行成功', message: '设备已响应，正在重启...',        created_at: '2026-07-01 18:00:00', executed_at: '2026-07-01 18:00:06' },
-  { id: 'CTL005', device_id: 'SL-001', command: 'flash',    command_label: '闪烁',   params: {},                    status: 'success', status_label: '执行成功', message: '设备已响应，灯光开始闪烁',        created_at: '2026-07-01 16:30:00', executed_at: '2026-07-01 16:30:02' },
+  { id: 'CTL001', device_id: 'SL_001', command: 'turn_on',  command_label: '开灯',   params: {},                    status: 'success', status_label: '执行成功', message: '设备已响应，灯光已开启',        created_at: '2026-07-02 14:30:00', executed_at: '2026-07-02 14:30:05' },
+  { id: 'CTL002', device_id: 'SL_001', command: 'dim',      command_label: '调光',   params: { brightness: 75 },    status: 'success', status_label: '执行成功', message: '设备已响应，亮度已调整为 75%', created_at: '2026-07-02 14:25:00', executed_at: '2026-07-02 14:25:03' },
+  { id: 'CTL003', device_id: 'SL_001', command: 'turn_off', command_label: '关灯',   params: {},                    status: 'success', status_label: '执行成功', message: '设备已响应，灯光已关闭',        created_at: '2026-07-02 10:00:00', executed_at: '2026-07-02 10:00:04' },
+  { id: 'CTL004', device_id: 'SL_001', command: 'restart',  command_label: '重启',   params: {},                    status: 'success', status_label: '执行成功', message: '设备已响应，正在重启...',        created_at: '2026-07-01 18:00:00', executed_at: '2026-07-01 18:00:06' },
+  { id: 'CTL005', device_id: 'SL_001', command: 'flash',    command_label: '闪烁',   params: {},                    status: 'success', status_label: '执行成功', message: '设备已响应，灯光开始闪烁',        created_at: '2026-07-01 16:30:00', executed_at: '2026-07-01 16:30:02' },
 ]
 
 // ── 工具函数 ────────────────────────────────────────────────────────────

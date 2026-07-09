@@ -4,6 +4,7 @@ import { fetchDashboardStats, fetchEnergyTrend, fetchDistrictData, fetchEdgeStat
 import { fetchAllDevicesForMap } from '../api/devices.js'
 import { useChartScale } from '../composables/useChartScale.js'
 import { useAutoRefresh } from '../composables/useAutoRefresh.js'
+import { useMqtt } from '../composables/useMqtt.js'
 import { withCache, invalidateCache } from '../utils/requestCache.js'
 import DeviceMap from '../components/DeviceMap.vue'
 import * as echarts from 'echarts'
@@ -154,8 +155,12 @@ async function refreshLiveData() {
   }
 }
 
-// 统计卡片 + 边缘AI 每 30 秒自动刷新 + 首次立即执行
-useAutoRefresh(refreshLiveData, { interval: 30000, immediateFirst: true })
+// 统计卡片 + 边缘AI 每 5 分钟轮询兜底，MQTT 实时推送触发即时刷新
+useAutoRefresh(refreshLiveData, { interval: 300000, immediateFirst: true })
+
+const { subscribe } = useMqtt()
+subscribe('system/alarms', () => refreshLiveData())
+subscribe('streetlight/+/heartbeat', () => refreshLiveData())
 
 function toggleEdgeExpand() {
   edgeExpanded.value = !edgeExpanded.value

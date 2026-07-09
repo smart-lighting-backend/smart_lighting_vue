@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
 import { useAutoRefresh } from '../composables/useAutoRefresh.js'
+import { useMqtt } from '../composables/useMqtt.js'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElCascader } from 'element-plus'
 import { Plus, Edit, Delete, Location, Download, Upload, Connection, CircleClose, CircleCheck, Sunny, Moon } from '@element-plus/icons-vue'
@@ -139,6 +140,14 @@ async function loadDevices() {
 
 onMounted(() => {
   loadDevices()
+  const { subscribe } = useMqtt()
+  subscribe('streetlight/+/heartbeat', () => {
+    const statusVal = STATUS_QUERY_MAP[statusFilter.value]
+    fetchDeviceList({ status: statusVal, pageSize: 10000 }).then(res => {
+      const raw = Array.isArray(res) ? res : (res.data || [])
+      devices.value = raw
+    }).catch(() => {})
+  })
   useAutoRefresh(async () => {
     // 静默刷新，不触发表格 loading 遮罩
     try {
@@ -148,7 +157,7 @@ onMounted(() => {
       devices.value = raw
     } catch {}
   }, {
-    interval: 60000,
+    interval: 300000,
     isSensitive: () => createDialogVisible.value || deletingDeviceId.value || togglingDeviceId.value || areaBindingDialogVisible.value || areaUnbindingDeviceId.value || batchOperating.value,
   })
 })

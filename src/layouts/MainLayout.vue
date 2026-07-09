@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserInfo } from '../composables/useUserInfo.js'
 import { clearAuth, getMenus, saveMenus, refreshPermissionsAndMenus, getUserInfo, getPermissions } from '../api/auth.js'
 import { fetchAlarmPage } from '../api/warnings.js'
-import { useAutoRefresh } from '../composables/useAutoRefresh.js'
+import { useMqtt } from '../composables/useMqtt.js'
 import { fetchVisibleMenus } from '../api/menu.js'
 import ManualControlModal from '../components/ManualControlModal.vue'
 
@@ -208,21 +208,22 @@ function autoExpandMenus() {
 // 暴露刷新方法给子组件（菜单管理页面）
 provide('reloadSidebarMenus', loadMenus)
 
+const { subscribe: subscribeAlarm } = useMqtt()
+
+async function refreshAlarmBadge() {
+  try {
+    const res = await fetchAlarmPage({ status: 'ACTIVE', pageNum: 1, pageSize: 1 })
+    const d = res?.data
+    alarmCount.value = d?.total ?? (Array.isArray(d) ? d.length : 0)
+  } catch (_) { /* ignore */ }
+}
+
 onMounted(async () => {
   await refreshPermissionsAndMenus()
   await loadMenus()
   autoExpandMenus()
-  // 告警角标自动刷新
-  fetchAlarmPage({ status: 'ACTIVE', pageNum: 1, pageSize: 1 }).then(res => {
-    const d = res?.data
-    alarmCount.value = d?.total ?? (Array.isArray(d) ? d.length : 0)
-  }).catch(() => {})
-  useAutoRefresh(() => {
-    fetchAlarmPage({ status: 'ACTIVE', pageNum: 1, pageSize: 1 }).then(res => {
-      const d = res?.data
-      alarmCount.value = d?.total ?? (Array.isArray(d) ? d.length : 0)
-    }).catch(() => {})
-  }, { interval: 45000 })
+  refreshAlarmBadge()
+  subscribeAlarm('system/alarms', () => refreshAlarmBadge())
 })
 
 </script>

@@ -45,7 +45,7 @@ const SUPPORTED_IMPORT_EXTENSIONS = new Set(['csv', 'xlsx'])
 export async function downloadTemplate() {
   const rows = [
     TEMPLATE_HEADERS,
-    ['SL-007', '北门-03', 'A区', '106.5622', '29.5621', '60'],
+    ['SL_007', '北门-03', 'A区', '106.5622', '29.5621', '60'],
   ]
   const data = await buildXlsxBlobData(rows)
   downloadBlob(

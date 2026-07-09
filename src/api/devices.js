@@ -36,12 +36,12 @@ export const STATUS_QUERY_MAP = { '全部': undefined, '在线': 1, '离线': 2,
 
 // ── Mock 数据 ──────────────────────────────────────────────────────────────
 const MOCK_DEVICES = [
-  { id: 1, deviceId: 'SL-001', name: '南门-01',     area: 'A区', areaId: 7,  location: '106.5622,29.5621', status: 1, healthScore: 98.50, topicPrefix: 'streetlight', lastHeartbeatAt: '2026-07-02T09:18:06', enabled: true, deleted: false },
-  { id: 2, deviceId: 'SL-002', name: '东门-02',     area: 'A区', areaId: 8,  location: '106.5630,29.5630', status: 1, healthScore: 85.00, topicPrefix: 'streetlight', lastHeartbeatAt: '2026-07-02T09:17:30', enabled: true, deleted: false },
-  { id: 3, deviceId: 'SL-003', name: '创业大道-01', area: 'B区', areaId: 9,  location: '106.5700,29.5700', status: 2, healthScore: 32.00, topicPrefix: 'streetlight', lastHeartbeatAt: '2026-07-01T22:10:00', enabled: true, deleted: false },
-  { id: 4, deviceId: 'SL-004', name: '人民广场-01', area: 'C区', areaId: 11, location: '106.5660,29.5660', status: 1, healthScore: 78.00, topicPrefix: 'streetlight', lastHeartbeatAt: '2026-07-02T09:15:00', enabled: true, deleted: false },
-  { id: 5, deviceId: 'SL-005', name: '工业园-01',   area: 'D区', areaId: null, location: '106.5800,29.5800', status: 1, healthScore: 88.00, topicPrefix: 'streetlight', lastHeartbeatAt: '2026-07-02T09:16:00', enabled: true, deleted: false },
-  { id: 6, deviceId: 'SL-006', name: '学院路-01',   area: 'E区', areaId: null, location: '106.5900,29.5900', status: 1, healthScore: 95.00, topicPrefix: 'streetlight', lastHeartbeatAt: '2026-07-02T09:14:00', enabled: true, deleted: false },
+  { id: 1, deviceId: 'SL_001', name: '南门-01',     area: 'A区', areaId: 7,  location: '106.5622,29.5621', status: 1, healthScore: 98.50, topicPrefix: 'streetlight', lastHeartbeatAt: '2026-07-02T09:18:06', enabled: true, deleted: false },
+  { id: 2, deviceId: 'SL_002', name: '东门-02',     area: 'A区', areaId: 8,  location: '106.5630,29.5630', status: 1, healthScore: 85.00, topicPrefix: 'streetlight', lastHeartbeatAt: '2026-07-02T09:17:30', enabled: true, deleted: false },
+  { id: 3, deviceId: 'SL_003', name: '创业大道-01', area: 'B区', areaId: 9,  location: '106.5700,29.5700', status: 2, healthScore: 32.00, topicPrefix: 'streetlight', lastHeartbeatAt: '2026-07-01T22:10:00', enabled: true, deleted: false },
+  { id: 4, deviceId: 'SL_004', name: '人民广场-01', area: 'C区', areaId: 11, location: '106.5660,29.5660', status: 1, healthScore: 78.00, topicPrefix: 'streetlight', lastHeartbeatAt: '2026-07-02T09:15:00', enabled: true, deleted: false },
+  { id: 5, deviceId: 'SL_005', name: '工业园-01',   area: 'D区', areaId: null, location: '106.5800,29.5800', status: 1, healthScore: 88.00, topicPrefix: 'streetlight', lastHeartbeatAt: '2026-07-02T09:16:00', enabled: true, deleted: false },
+  { id: 6, deviceId: 'SL_006', name: '学院路-01',   area: 'E区', areaId: null, location: '106.5900,29.5900', status: 1, healthScore: 95.00, topicPrefix: 'streetlight', lastHeartbeatAt: '2026-07-02T09:14:00', enabled: true, deleted: false },
 ]
 
 const MOCK_DEVICE_STORAGE_KEY = 'smart_light_mock_devices'
@@ -75,12 +75,12 @@ function persistMockDevices() {
 }
 
 const MOCK_TELEMETRY = {
-  'SL-001': { id: 1, deviceId: 'SL-001', illuminance: 1256, temperature: 26.8, humidity: 45, pm25: 18, aqi: 45, pir: 1, trafficFlow: 128, collectedAt: '2026-07-05T14:35:00' },
-  'SL-002': { id: 2, deviceId: 'SL-002', illuminance: 890,  temperature: 27.2, humidity: 42, pm25: 22, aqi: 55, pir: 0, trafficFlow: 95,  collectedAt: '2026-07-05T14:34:55' },
-  'SL-003': { id: 3, deviceId: 'SL-003', illuminance: 1520, temperature: 25.5, humidity: 48, pm25: 35, aqi: 72, pir: 1, trafficFlow: 156, collectedAt: '2026-07-05T14:34:40' },
-  'SL-004': { id: 4, deviceId: 'SL-004', illuminance: 980,  temperature: 26.1, humidity: 44, pm25: 30, aqi: 80, pir: 0, trafficFlow: 56,  collectedAt: '2026-07-05T14:34:30' },
-  'SL-005': { id: 5, deviceId: 'SL-005', illuminance: 1100, temperature: 27.5, humidity: 40, pm25: 15, aqi: 38, pir: 1, trafficFlow: 178, collectedAt: '2026-07-05T14:34:20' },
-  'SL-006': { id: 6, deviceId: 'SL-006', illuminance: 750,  temperature: 28.0, humidity: 38, pm25: 10, aqi: 30, pir: 0, trafficFlow: 42,  collectedAt: '2026-07-05T14:34:10' },
+  'SL_001': { id: 1, deviceId: 'SL_001', illuminance: 1256, temperature: 26.8, humidity: 45, pm25: 18, aqi: 45, pir: 1, trafficFlow: 128, collectedAt: '2026-07-05T14:35:00' },
+  'SL_002': { id: 2, deviceId: 'SL_002', illuminance: 890,  temperature: 27.2, humidity: 42, pm25: 22, aqi: 55, pir: 0, trafficFlow: 95,  collectedAt: '2026-07-05T14:34:55' },
+  'SL_003': { id: 3, deviceId: 'SL_003', illuminance: 1520, temperature: 25.5, humidity: 48, pm25: 35, aqi: 72, pir: 1, trafficFlow: 156, collectedAt: '2026-07-05T14:34:40' },
+  'SL_004': { id: 4, deviceId: 'SL_004', illuminance: 980,  temperature: 26.1, humidity: 44, pm25: 30, aqi: 80, pir: 0, trafficFlow: 56,  collectedAt: '2026-07-05T14:34:30' },
+  'SL_005': { id: 5, deviceId: 'SL_005', illuminance: 1100, temperature: 27.5, humidity: 40, pm25: 15, aqi: 38, pir: 1, trafficFlow: 178, collectedAt: '2026-07-05T14:34:20' },
+  'SL_006': { id: 6, deviceId: 'SL_006', illuminance: 750,  temperature: 28.0, humidity: 38, pm25: 10, aqi: 30, pir: 0, trafficFlow: 42,  collectedAt: '2026-07-05T14:34:10' },
 }
 
 async function safeCall(apiFn, mockData, endpoint) {
@@ -394,7 +394,7 @@ export async function fetchAllDevicesForMap() {
 
 // ── 设备详情 GET /api/devices/{deviceId} ─────────────────────────────────
 /**
- * @param {string} deviceId  例如 'SL-001'
+ * @param {string} deviceId  例如 'SL_001'
  */
 export function fetchDeviceDetail(deviceId) {
   return safeCall(
@@ -791,6 +791,16 @@ export function fetchHealthSummary() {
  */
 export function faultSimulate(deviceId) {
   return request.post('/api/devices/fault-simulate', null, {
+    params: deviceId ? { deviceId } : {},
+  })
+}
+
+/**
+ * 模拟离线 — 将随机（或指定）在线设备的心跳回拨，触发 OFFLINE 告警。
+ * @param {string} [deviceId] 可选，不传则随机选取在线设备
+ */
+export function offlineSimulate(deviceId) {
+  return request.post('/api/devices/offline-simulate', null, {
     params: deviceId ? { deviceId } : {},
   })
 }

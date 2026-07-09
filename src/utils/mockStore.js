@@ -20,7 +20,7 @@ const store = reactive({
 
 /**
  * 记录一次 Mock 数据使用。
- * @param {string} endpoint  接口标识，如 "GET /api/telemetry/latest/SL-001"
+ * @param {string} endpoint  接口标识，如 "GET /api/telemetry/latest/SL_001"
  */
 export function reportMock(endpoint) {
   store.details[endpoint] = (store.details[endpoint] || 0) + 1

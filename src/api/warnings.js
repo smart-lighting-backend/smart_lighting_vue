@@ -44,12 +44,12 @@ export const ALARM_TYPE_MAP = {
 
 // ── Mock 数据 ─────────────────────────────────────────────────────────────
 const MOCK_ALARMS = [
-  { id: 1, deviceId: 'SL-001', type: 'FAULT',      level: 'CRITICAL', status: 'ACTIVE',       reason: '传感器数据异常: illuminance=999.0, temperature=999.0',          startAt: '2026-07-09T14:32:05', recoverAt: null,                  handler: null },
-  { id: 2, deviceId: 'SL-003', type: 'OFFLINE',    level: 'MAJOR',    status: 'ACKNOWLEDGED', reason: '心跳中断超过 5 分钟，最后心跳时间：2026-07-09 12:10:00',      startAt: '2026-07-09T12:15:22', recoverAt: null,                  handler: '张工' },
-  { id: 3, deviceId: 'SL-005', type: 'HEALTH_LOW', level: 'WARNING',  status: 'ACTIVE',       reason: '健康分降至 32.00，低于阈值 60',                                 startAt: '2026-07-09T08:00:00', recoverAt: null,                  handler: null },
-  { id: 4, deviceId: 'SL-006', type: 'FAULT',      level: 'CRITICAL', status: 'RECOVERED',    reason: '传感器数据异常: humidity=-99.0',                                startAt: '2026-07-08T22:08:33', recoverAt: '2026-07-08T23:00:00', handler: '李工' },
-  { id: 5, deviceId: 'SL-007', type: 'OFFLINE',    level: 'MAJOR',    status: 'RECOVERED',    reason: '设备未上报心跳，判定为离线',                                    startAt: '2026-07-08T18:50:11', recoverAt: '2026-07-08T19:30:00', handler: 'system' },
-  { id: 6, deviceId: 'SL-001', type: 'HEALTH_LOW', level: 'WARNING',  status: 'RECOVERED',    reason: '健康分降至 45.00，低于阈值 60',                                 startAt: '2026-07-07T10:00:00', recoverAt: '2026-07-07T12:00:00', handler: 'system' },
+  { id: 1, deviceId: 'SL_001', type: 'FAULT',      level: 'CRITICAL', status: 'ACTIVE',       reason: '传感器数据异常: illuminance=999.0, temperature=999.0',          startAt: '2026-07-09T14:32:05', recoverAt: null,                  handler: null },
+  { id: 2, deviceId: 'SL_003', type: 'OFFLINE',    level: 'MAJOR',    status: 'ACKNOWLEDGED', reason: '心跳中断超过 5 分钟，最后心跳时间：2026-07-09 12:10:00',      startAt: '2026-07-09T12:15:22', recoverAt: null,                  handler: '张工' },
+  { id: 3, deviceId: 'SL_005', type: 'HEALTH_LOW', level: 'WARNING',  status: 'ACTIVE',       reason: '健康分降至 32.00，低于阈值 60',                                 startAt: '2026-07-09T08:00:00', recoverAt: null,                  handler: null },
+  { id: 4, deviceId: 'SL_006', type: 'FAULT',      level: 'CRITICAL', status: 'RECOVERED',    reason: '传感器数据异常: humidity=-99.0',                                startAt: '2026-07-08T22:08:33', recoverAt: '2026-07-08T23:00:00', handler: '李工' },
+  { id: 5, deviceId: 'SL_007', type: 'OFFLINE',    level: 'MAJOR',    status: 'RECOVERED',    reason: '设备未上报心跳，判定为离线',                                    startAt: '2026-07-08T18:50:11', recoverAt: '2026-07-08T19:30:00', handler: 'system' },
+  { id: 6, deviceId: 'SL_001', type: 'HEALTH_LOW', level: 'WARNING',  status: 'RECOVERED',    reason: '健康分降至 45.00，低于阈值 60',                                 startAt: '2026-07-07T10:00:00', recoverAt: '2026-07-07T12:00:00', handler: 'system' },
 ]
 
 async function safeCall(apiFn, mockData, endpoint) {

@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { fetchVisionEvents, fetchVoiceEvents } from '../api/events.js'
 import { useAutoRefresh } from '../composables/useAutoRefresh.js'
+import { useMqtt } from '../composables/useMqtt.js'
 import { ElInput, ElSelect, ElOption, ElPagination, ElTag, ElMessage, ElNotification } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 
@@ -94,9 +95,26 @@ function refreshActiveTab() {
   else loadVoiceEvents()
 }
 
+const { subscribe } = useMqtt()
+
+subscribe('streetlight/+/vision/event', (data) => {
+  if (data.deviceId) {
+    visionList.value.unshift(data)
+    visionTotal.value++
+    if (visionList.value.length > 50) visionList.value.length = 50
+  }
+})
+subscribe('streetlight/+/voice/event', (data) => {
+  if (data.deviceId) {
+    voiceList.value.unshift(data)
+    voiceTotal.value++
+    if (voiceList.value.length > 50) voiceList.value.length = 50
+  }
+})
+
 onMounted(() => {
   loadVisionEvents()
-  useAutoRefresh(refreshActiveTab, { interval: 25000 })
+  useAutoRefresh(refreshActiveTab, { interval: 300000 })
 })
 </script>
 

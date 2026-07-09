@@ -16,12 +16,12 @@ import { reportMock } from '../utils/mockStore.js'
 
 // ── Mock 数据 ─────────────────────────────────────────────────────────────
 const MOCK_LATEST = {
-  'SL-001': { deviceId: 'SL-001', illuminance: 1256, temperature: 26.8, humidity: 45, pir: 1, updateTime: '2026-07-05 14:35:00' },
-  'SL-002': { deviceId: 'SL-002', illuminance: 890,  temperature: 27.2, humidity: 42, pir: 0, updateTime: '2026-07-05 14:34:55' },
-  'SL-003': { deviceId: 'SL-003', illuminance: 1520, temperature: 25.5, humidity: 48, pir: 1, updateTime: '2026-07-05 14:34:40' },
-  'SL-004': { deviceId: 'SL-004', illuminance: 980,  temperature: 26.1, humidity: 44, pir: 0, updateTime: '2026-07-05 14:34:30' },
-  'SL-005': { deviceId: 'SL-005', illuminance: 1100, temperature: 27.5, humidity: 40, pir: 1, updateTime: '2026-07-05 14:34:20' },
-  'SL-006': { deviceId: 'SL-006', illuminance: 750,  temperature: 28.0, humidity: 38, pir: 0, updateTime: '2026-07-05 14:34:10' },
+  'SL_001': { deviceId: 'SL_001', illuminance: 1256, temperature: 26.8, humidity: 45, pir: 1, updateTime: '2026-07-05 14:35:00' },
+  'SL_002': { deviceId: 'SL_002', illuminance: 890,  temperature: 27.2, humidity: 42, pir: 0, updateTime: '2026-07-05 14:34:55' },
+  'SL_003': { deviceId: 'SL_003', illuminance: 1520, temperature: 25.5, humidity: 48, pir: 1, updateTime: '2026-07-05 14:34:40' },
+  'SL_004': { deviceId: 'SL_004', illuminance: 980,  temperature: 26.1, humidity: 44, pir: 0, updateTime: '2026-07-05 14:34:30' },
+  'SL_005': { deviceId: 'SL_005', illuminance: 1100, temperature: 27.5, humidity: 40, pir: 1, updateTime: '2026-07-05 14:34:20' },
+  'SL_006': { deviceId: 'SL_006', illuminance: 750,  temperature: 28.0, humidity: 38, pir: 0, updateTime: '2026-07-05 14:34:10' },
 }
 
 function genHistoryMock(deviceId, timeRange) {
