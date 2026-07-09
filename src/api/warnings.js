@@ -15,8 +15,8 @@
  *   DELETE /api/alarms/batch           批量删除
  *
  * 告警状态: ACTIVE | ACKNOWLEDGED | RECOVERED
- * 告警级别: CRITICAL | MAJOR | MINOR | WARNING | INFO
- * 告警类型: OFFLINE | FAULT | SECURITY | VISION
+ * 告警级别: CRITICAL | MAJOR | WARNING
+ * 告警类型: OFFLINE | FAULT | HEALTH_LOW
  */
 import request from './request.js'
 import { reportMock } from '../utils/mockStore.js'
@@ -34,8 +34,6 @@ export const ALARM_LEVEL_MAP = {
   CRITICAL: { label: '紧急', cls: 'critical' },
   MAJOR:    { label: '严重', cls: 'critical' },
   WARNING:  { label: '警告', cls: 'warning' },
-  MINOR:    { label: '提示', cls: 'info' },
-  INFO:     { label: '提示', cls: 'info' },
 }
 
 export const ALARM_TYPE_MAP = {
@@ -46,14 +44,12 @@ export const ALARM_TYPE_MAP = {
 
 // ── Mock 数据 ─────────────────────────────────────────────────────────────
 const MOCK_ALARMS = [
-  { id: 1, deviceId: 'SL-001', type: 'FAULT',    level: 'CRITICAL', status: 'ACTIVE',       reason: '电源模块输出电压异常，超出额定范围 ±15%',                    startAt: '2023-10-27T14:32:05', recoverAt: null,                  handler: null },
-  { id: 2, deviceId: 'SL-003', type: 'OFFLINE',  level: 'MAJOR',    status: 'ACKNOWLEDGED', reason: '心跳中断超过 5 分钟，最后心跳时间：2023-10-27 12:10:00',      startAt: '2023-10-27T12:15:22', recoverAt: null,                  handler: '张工' },
-  { id: 3, deviceId: 'SL-004', type: 'VISION',   level: 'MINOR',    status: 'RECOVERED',    reason: '摄像头视场被轻微遮挡，影像质量下降',                          startAt: '2023-10-26T18:40:11', recoverAt: '2023-10-26T19:00:00', handler: 'system' },
-  { id: 4, deviceId: 'SL-005', type: 'SECURITY', level: 'CRITICAL', status: 'ACKNOWLEDGED', reason: '检测到设备门被非授权方式打开',                                startAt: '2023-10-26T03:12:55', recoverAt: null,                  handler: '安保组-王五' },
-  { id: 5, deviceId: 'SL-006', type: 'FAULT',    level: 'WARNING',  status: 'RECOVERED',    reason: '驱动板温度持续超过阈值，触发降功率保护',                      startAt: '2023-10-25T22:08:33', recoverAt: '2023-10-25T23:00:00', handler: '李工' },
-  { id: 6, deviceId: 'SL-007', type: 'OFFLINE',  level: 'MAJOR',    status: 'RECOVERED',    reason: '设备未上报心跳，判定为离线',                                  startAt: '2023-10-25T18:50:11', recoverAt: '2023-10-25T19:30:00', handler: 'system' },
-  { id: 7, deviceId: 'SL-008', type: 'VISION',   level: 'INFO',     status: 'RECOVERED',    reason: '夜间巡检图像亮度异常，疑似灯具衰减',                          startAt: '2023-10-25T02:33:40', recoverAt: '2023-10-25T08:00:00', handler: '赵工' },
-  { id: 8, deviceId: 'SL-001', type: 'SECURITY', level: 'CRITICAL', status: 'RECOVERED',    reason: '检测到可疑人员在设备周围长时间徘徊',                          startAt: '2023-10-24T23:15:18', recoverAt: '2023-10-24T23:45:00', handler: '安保组' },
+  { id: 1, deviceId: 'SL-001', type: 'FAULT',      level: 'CRITICAL', status: 'ACTIVE',       reason: '传感器数据异常: illuminance=999.0, temperature=999.0',          startAt: '2026-07-09T14:32:05', recoverAt: null,                  handler: null },
+  { id: 2, deviceId: 'SL-003', type: 'OFFLINE',    level: 'MAJOR',    status: 'ACKNOWLEDGED', reason: '心跳中断超过 5 分钟，最后心跳时间：2026-07-09 12:10:00',      startAt: '2026-07-09T12:15:22', recoverAt: null,                  handler: '张工' },
+  { id: 3, deviceId: 'SL-005', type: 'HEALTH_LOW', level: 'WARNING',  status: 'ACTIVE',       reason: '健康分降至 32.00，低于阈值 60',                                 startAt: '2026-07-09T08:00:00', recoverAt: null,                  handler: null },
+  { id: 4, deviceId: 'SL-006', type: 'FAULT',      level: 'CRITICAL', status: 'RECOVERED',    reason: '传感器数据异常: humidity=-99.0',                                startAt: '2026-07-08T22:08:33', recoverAt: '2026-07-08T23:00:00', handler: '李工' },
+  { id: 5, deviceId: 'SL-007', type: 'OFFLINE',    level: 'MAJOR',    status: 'RECOVERED',    reason: '设备未上报心跳，判定为离线',                                    startAt: '2026-07-08T18:50:11', recoverAt: '2026-07-08T19:30:00', handler: 'system' },
+  { id: 6, deviceId: 'SL-001', type: 'HEALTH_LOW', level: 'WARNING',  status: 'RECOVERED',    reason: '健康分降至 45.00，低于阈值 60',                                 startAt: '2026-07-07T10:00:00', recoverAt: '2026-07-07T12:00:00', handler: 'system' },
 ]
 
 async function safeCall(apiFn, mockData, endpoint) {
@@ -189,11 +185,7 @@ export function deleteAlarm(id) {
  * @param {{ handler: string, remark?: string }} data
  */
 export function handleAlarm(id, data) {
-  return safeCall(
-    () => request.put(`/api/alarms/${id}/handle`, data),
-    { id, status: 'ACKNOWLEDGED', handler: data.handler, recoverAt: new Date().toISOString() },
-    `PUT /api/alarms/${id}/handle`
-  )
+  return request.put(`/api/alarms/${id}/handle`, data)
 }
 
 // ── 告警统计 GET /api/alarms/stats ───────────────────────────────────────
@@ -203,22 +195,19 @@ export function handleAlarm(id, data) {
 export function fetchAlarmStats() {
   const mockStats = {
     byLevel:  [
-      { level: 'CRITICAL', count: 3 },
+      { level: 'CRITICAL', count: 2 },
       { level: 'MAJOR',    count: 2 },
-      { level: 'WARNING',  count: 1 },
-      { level: 'MINOR',    count: 1 },
-      { level: 'INFO',     count: 1 },
+      { level: 'WARNING',  count: 2 },
     ],
     byType:   [
-      { type: 'FAULT',    count: 2 },
-      { type: 'OFFLINE',  count: 2 },
-      { type: 'SECURITY', count: 2 },
-      { type: 'VISION',   count: 2 },
+      { type: 'FAULT',      count: 2 },
+      { type: 'OFFLINE',    count: 2 },
+      { type: 'HEALTH_LOW', count: 2 },
     ],
     byStatus: [
-      { status: 'ACTIVE',       count: 1 },
-      { status: 'ACKNOWLEDGED', count: 2 },
-      { status: 'RECOVERED',    count: 5 },
+      { status: 'ACTIVE',       count: 2 },
+      { status: 'ACKNOWLEDGED', count: 1 },
+      { status: 'RECOVERED',    count: 3 },
     ],
   }
   return safeCall(() => request.get('/api/alarms/stats'), mockStats, 'GET /api/alarms/stats')

@@ -785,3 +785,13 @@ export function fetchHealthSummary() {
   )
 }
 
+/**
+ * 故障模拟 — 向随机（或指定）在线设备发布异常遥测，触发 FAULT 告警。
+ * @param {string} [deviceId] 可选，不传则随机选取在线设备
+ */
+export function faultSimulate(deviceId) {
+  return request.post('/api/devices/fault-simulate', null, {
+    params: deviceId ? { deviceId } : {},
+  })
+}
+

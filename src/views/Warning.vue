@@ -2,9 +2,11 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { fetchAlarmPage, fetchAlarmExportList, ALARM_STATUS_MAP, ALARM_LEVEL_MAP, ALARM_TYPE_MAP } from '../api/warnings.js'
+import { fetchAlarmPage, fetchAlarmExportList, handleAlarm, ALARM_STATUS_MAP, ALARM_LEVEL_MAP, ALARM_TYPE_MAP } from '../api/warnings.js'
+import { faultSimulate } from '../api/devices.js'
 import { buildAlarmCsvContent, formatAlarmTime } from '../utils/alarmExport.js'
 import { useAutoRefresh } from '../composables/useAutoRefresh.js'
+import { useUserInfo } from '../composables/useUserInfo.js'
 
 const route = useRoute()
 
@@ -36,7 +38,6 @@ const levelOptions = [
   { label: '紧急',     value: 'CRITICAL' },
   { label: '严重',     value: 'MAJOR' },
   { label: '警告',     value: 'WARNING' },
-  { label: '提示',     value: 'INFO' },
 ]
 const statusOptions = [
   { label: '全部状态',  value: 'ALL' },
@@ -129,6 +130,36 @@ function typeLabel(type) {
   return ALARM_TYPE_MAP[type] || type || '--'
 }
 
+const { username } = useUserInfo()
+
+const confirming = ref(new Set())
+async function handleConfirm(alarm) {
+  confirming.value.add(alarm.id)
+  try {
+    await handleAlarm(alarm.id, { handler: username.value, remark: '运维确认处理' })
+    ElMessage.success(`已确认告警 #${alarm.id}`)
+    loadData()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || e?.message || '确认失败')
+  } finally {
+    confirming.value.delete(alarm.id)
+  }
+}
+
+const simulating = ref(false)
+async function simulateFault() {
+  simulating.value = true
+  try {
+    const res = await faultSimulate()
+    ElMessage.success(`故障模拟成功 — 已向 ${res.data.deviceId} (${res.data.deviceName}) 注入异常遥测数据，连续2条`)
+    setTimeout(() => loadData(), 1500)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || e?.message || '故障模拟失败')
+  } finally {
+    simulating.value = false
+  }
+}
+
 // URL 参数预设筛选（同步执行，在 setup 阶段而非 onMounted 中）
 if (route.query.status && statusOptions.some(o => o.value === route.query.status)) {
   filters.status = route.query.status
@@ -155,10 +186,16 @@ onMounted(() => {
         <h1 class="page-title">告警列表</h1>
         <p class="page-sub">实时监控全域设备状态，快速定位并处理异常事件。</p>
       </div>
-      <button class="export-btn" :disabled="exporting" @click="handleExport">
-        <svg viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        {{ exporting ? '导出中...' : '导出报表' }}
-      </button>
+      <div class="header-actions">
+        <button class="fault-btn" :disabled="simulating" @click="simulateFault">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v2m0 4h.01M5.07 19H19a2 2 0 001.73-3L13.73 4.99a2 2 0 00-3.46 0L3.34 16A2 2 0 005.07 19z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          {{ simulating ? '注入中...' : '模拟故障' }}
+        </button>
+        <button class="export-btn" :disabled="exporting" @click="handleExport">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          {{ exporting ? '导出中...' : '导出报表' }}
+        </button>
+      </div>
     </div>
 
     <!-- 筛选栏 -->
@@ -255,10 +292,14 @@ onMounted(() => {
                   </span>
                 </td>
                 <td class="td-handler">{{ a.handler || '--' }}</td>
-                <td>
+                <td class="td-actions">
+                  <button v-if="a.status === 'ACTIVE'" class="confirm-btn" :disabled="confirming.has(a.id)" @click="handleConfirm(a)">
+                    <svg viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    {{ confirming.has(a.id) ? '...' : '确认' }}
+                  </button>
                   <button class="action-btn" @click="$router.push(`/devices/${a.deviceId}`)">
                     <svg viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.5"/></svg>
-                    查看设备
+                    查看
                   </button>
                 </td>
               </tr>
@@ -288,10 +329,15 @@ onMounted(() => {
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; }
 .page-title { font-size: 22px; font-weight: 700; color: #e0f4ff; margin-bottom: 4px; }
 .page-sub { font-size: 13px; color: rgba(140,190,220,0.6); }
+.header-actions { display: flex; gap: 10px; }
 .export-btn { display: flex; align-items: center; gap: 6px; padding: 8px 16px; background: rgba(0,80,140,0.25); border: 1px solid rgba(0,120,200,0.35); border-radius: 8px; color: rgba(140,200,230,0.9); font-size: 13px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
 .export-btn svg { width: 15px; height: 15px; }
 .export-btn:hover { background: rgba(0,120,200,0.2); border-color: rgba(77,208,225,0.4); color: #4dd0e1; }
 .export-btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+.fault-btn { display: flex; align-items: center; gap: 6px; padding: 8px 16px; background: rgba(200,80,30,0.2); border: 1px solid rgba(220,100,50,0.35); border-radius: 8px; color: rgba(255,170,80,0.9); font-size: 13px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+.fault-btn svg { width: 15px; height: 15px; }
+.fault-btn:hover { background: rgba(200,80,30,0.3); border-color: rgba(255,150,60,0.5); color: #ffa040; box-shadow: 0 0 12px rgba(255,100,30,0.2); }
+.fault-btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
 
 /* Filter bar */
 .filter-bar { background: rgba(8,20,45,0.8); border: 1px solid rgba(0,120,200,0.15); border-radius: 10px; padding: 16px 20px; display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -338,9 +384,14 @@ onMounted(() => {
 .status-text.pending    { color: #ffa726; }
 .status-text.processing { color: #4dd0e1; }
 .status-text.resolved   { color: #66bb6a; }
+.td-actions { display: flex; gap: 6px; }
 .action-btn { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; background: rgba(0,80,140,0.2); border: 1px solid rgba(0,120,200,0.25); border-radius: 5px; color: rgba(77,208,225,0.9); font-size: 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
 .action-btn svg { width: 13px; height: 13px; }
 .action-btn:hover { background: rgba(0,120,200,0.2); border-color: rgba(77,208,225,0.5); color: #4dd0e1; }
+.confirm-btn { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; background: rgba(0,180,100,0.15); border: 1px solid rgba(0,200,100,0.3); border-radius: 5px; color: rgba(76,175,130,0.9); font-size: 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+.confirm-btn svg { width: 13px; height: 13px; }
+.confirm-btn:hover { background: rgba(0,180,100,0.25); border-color: rgba(0,220,120,0.5); color: #66bb6a; }
+.confirm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .pagination-bar { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-top: 1px solid rgba(0,80,140,0.15); }
 .total-text { font-size: 13px; color: rgba(140,190,220,0.6); }
 .pagination { display: flex; gap: 4px; align-items: center; }
