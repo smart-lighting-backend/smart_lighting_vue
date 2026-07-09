@@ -211,7 +211,7 @@ onMounted(() => {
         <table class="warn-table">
           <thead>
             <tr>
-              <th>告警ID</th>
+              <th>序号</th>
               <th>设备编号</th>
               <th>级别</th>
               <th>告警类型</th>
@@ -233,8 +233,8 @@ onMounted(() => {
               <td colspan="10" class="loading-row">暂无告警数据</td>
             </tr>
             <template v-else>
-              <tr v-for="a in alarms" :key="a.id" class="table-row">
-                <td class="td-id">#{{ a.id }}</td>
+              <tr v-for="(a, index) in alarms" :key="a.id" class="table-row">
+                <td class="td-seq">{{ total - (currentPage - 1) * pageSize - index }}</td>
                 <td class="td-device">
                   <button class="device-link" @click="$router.push(`/devices/${a.deviceId}`)">{{ a.deviceId }}</button>
                 </td>
@@ -323,7 +323,7 @@ onMounted(() => {
 .loading-row { text-align: center; padding: 40px; color: rgba(140,190,220,0.5); font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 8px; }
 .loading-spinner { width: 16px; height: 16px; border: 2px solid rgba(77,208,225,0.3); border-top-color: #4dd0e1; border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.td-id { font-family: monospace; font-size: 12px; color: rgba(140,190,220,0.6); white-space: nowrap; }
+.td-seq { font-size: 13px; color: rgba(140,190,220,0.6); white-space: nowrap; text-align: center; width: 60px; }
 .td-device .device-link { background: none; border: none; color: rgba(77,208,225,0.9); font-size: 12px; font-family: monospace; cursor: pointer; text-decoration: underline; padding: 0; }
 .td-device .device-link:hover { color: #4dd0e1; }
 .td-type { white-space: nowrap; }
