@@ -13,6 +13,8 @@
  *   GET    /api/devices/statistics/status     状态统计
  *   GET    /api/devices/statistics/area-status 区域状态统计
  *   POST   /api/devices/{deviceId}/control   手动控制
+ *   PUT    /api/devices/batch-turn-on        批量开灯
+ *   PUT    /api/devices/batch-turn-off       批量关灯
  *   PUT    /api/devices/batch-area            批量绑定/解绑设备区域
  *   PUT    /api/devices/batch-disable         批量停用设备
  *   PUT    /api/devices/batch-enable          批量启用设备
@@ -192,6 +194,22 @@ function applyMockBatchEnable(deviceIds = []) {
 
   persistMockDevices()
   return { total: deviceIds.length, success: updated.length, failed: deviceIds.length - updated.length }
+}
+
+function applyMockBatchControl(deviceIds = [], action) {
+  const idSet = new Set(deviceIds.map(id => String(id)))
+  const matched = activeMockDevices().filter(device => idSet.has(String(device.id)))
+
+  matched.forEach(device => {
+    applyMockControl(device.deviceId, { action })
+  })
+
+  return {
+    total: deviceIds.length,
+    success: matched.length,
+    failed: deviceIds.length - matched.length,
+    failedDetails: [],
+  }
 }
 
 function applyMockBatchDelete(deviceIds = []) {
@@ -496,6 +514,32 @@ export function batchEnableDevices(data) {
   )
 }
 
+// ── 批量开灯 PUT /api/devices/batch-turn-on ─────────────────────────────
+/**
+ * @param {{ deviceIds: number[] }} data
+ */
+export function batchTurnOnDevices(data) {
+  const payload = { deviceIds: data.deviceIds }
+  return safeCall(
+    () => request.put('/api/devices/batch-turn-on', payload),
+    () => applyMockBatchControl(data.deviceIds, 'ON'),
+    'PUT /api/devices/batch-turn-on'
+  )
+}
+
+// ── 批量关灯 PUT /api/devices/batch-turn-off ────────────────────────────
+/**
+ * @param {{ deviceIds: number[] }} data
+ */
+export function batchTurnOffDevices(data) {
+  const payload = { deviceIds: data.deviceIds }
+  return safeCall(
+    () => request.put('/api/devices/batch-turn-off', payload),
+    () => applyMockBatchControl(data.deviceIds, 'OFF'),
+    'PUT /api/devices/batch-turn-off'
+  )
+}
+
 // ── 批量删除设备 DELETE /api/devices/batch ──────────────────────────────
 /**
  * @param {{ deviceIds: number[] }} data
@@ -603,6 +647,8 @@ function applyMockControl(deviceId, payload) {
     ...currentLatestData,
     action,
     brightness,
+    controlSource: 'MANUAL',
+    controlIssuedAt: now.toISOString(),
   }
 
   applyMockUpdate(deviceId, {

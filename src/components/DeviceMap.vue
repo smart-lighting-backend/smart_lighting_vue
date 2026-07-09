@@ -340,11 +340,17 @@ function addMarkers(AMap) {
     const pos = parseLocation(d.location)
     if (!pos) return
 
+    const sc = d.status === 0 ? '#6b7f93' : d.status === 1 ? '#10b981' : d.status === 2 ? '#6b7f93' : d.status === 3 ? '#f59e0b' : '#999'
     const marker = new AMap.Marker({
       position: [pos.lng, pos.lat],
       icon: getIcon(d, false),
       anchor: 'bottom-center',
       zIndex: 100,
+      label: {
+        content: `<div style="font-size:10px;color:#fff;background:${sc};padding:1px 6px;border-radius:3px;white-space:nowrap;font-weight:600">${LABELS[d.status]}</div>`,
+        direction: 'bottom',
+        offset: new AMap.Pixel(0, 16),
+      },
     })
 
     marker.on('click', () => {
@@ -468,14 +474,6 @@ defineExpose({ highlightDevice, clearHighlight, fitBounds: () => {} })
       <span v-else-if="error" class="dm-error">{{ error }}</span>
     </div>
     <div ref="mapContainerRef" class="dm-container"></div>
-    <div class="dm-legend">
-      <span><i class="online"></i>在线</span>
-      <span><i class="warning"></i>异常</span>
-      <span><i class="offline"></i>离线/停用</span>
-      <span v-for="a in areaLegend" :key="a.name" class="dm-area-item">
-        <i :style="{ background: a.color, color: a.color, boxShadow: '0 0 12px ' + a.color }"></i>{{ a.name }}
-      </span>
-    </div>
     <div v-if="noLocationCount > 0" class="dm-no-loc-hint">
       {{ noLocationCount }} 台设备无位置信息，未在地图上显示
     </div>

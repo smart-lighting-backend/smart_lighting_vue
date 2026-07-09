@@ -3,8 +3,8 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { useAutoRefresh } from '../composables/useAutoRefresh.js'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElCascader } from 'element-plus'
-import { Plus, Edit, Delete, Location, Download, Upload, Connection, CircleClose, CircleCheck } from '@element-plus/icons-vue'
-import { createDevice, deleteDevice, fetchDeviceList, updateDevice, batchDeviceArea, batchDisableDevices, batchEnableDevices, batchDeleteDevices, STATUS_MAP, STATUS_QUERY_MAP } from '../api/devices.js'
+import { Plus, Edit, Delete, Location, Download, Upload, Connection, CircleClose, CircleCheck, Sunny, Moon } from '@element-plus/icons-vue'
+import { createDevice, deleteDevice, fetchDeviceList, updateDevice, batchDeviceArea, batchDisableDevices, batchEnableDevices, batchTurnOnDevices, batchTurnOffDevices, batchDeleteDevices, STATUS_MAP, STATUS_QUERY_MAP } from '../api/devices.js'
 import { fetchAreaTree } from '../api/area.js'
 import { useUserInfo } from '../composables/useUserInfo.js'
 import LocationPicker from '../components/LocationPicker.vue'
@@ -720,6 +720,68 @@ async function batchEnableSelected() {
   }
 }
 
+/** 批量开灯 */
+async function batchTurnOnSelected() {
+  const deviceIds = getSelectedDeviceDbIds()
+  if (!deviceIds.length) {
+    ElMessage.warning('未选中任何设备')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认对 ${deviceIds.length} 台设备下发开灯指令？设备将进入手动控制锁定。`,
+      '批量开灯',
+      { confirmButtonText: '确认开灯', cancelButtonText: '取消', type: 'info' }
+    )
+  } catch {
+    return
+  }
+
+  batchOperating.value = true
+  try {
+    const res = await batchTurnOnDevices({ deviceIds })
+    const success = res?.data?.success ?? deviceIds.length
+    ElMessage.success(`已下发开灯指令 ${success} 台`)
+    resetBatchSelection()
+    await loadDevices()
+  } catch (error) {
+    ElMessage.error(error?.message || '批量开灯失败')
+  } finally {
+    batchOperating.value = false
+  }
+}
+
+/** 批量关灯 */
+async function batchTurnOffSelected() {
+  const deviceIds = getSelectedDeviceDbIds()
+  if (!deviceIds.length) {
+    ElMessage.warning('未选中任何设备')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认对 ${deviceIds.length} 台设备下发关灯指令？设备将进入手动控制锁定。`,
+      '批量关灯',
+      { confirmButtonText: '确认关灯', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+
+  batchOperating.value = true
+  try {
+    const res = await batchTurnOffDevices({ deviceIds })
+    const success = res?.data?.success ?? deviceIds.length
+    ElMessage.success(`已下发关灯指令 ${success} 台`)
+    resetBatchSelection()
+    await loadDevices()
+  } catch (error) {
+    ElMessage.error(error?.message || '批量关灯失败')
+  } finally {
+    batchOperating.value = false
+  }
+}
+
 /** 批量删除设备 */
 async function batchDeleteSelected() {
   const deviceIds = getSelectedDeviceDbIds()
@@ -769,7 +831,7 @@ async function batchDeleteSelected() {
           批量导入
         </button>
         <button
-          v-if="hasPerm('device:update') || hasPerm('device:delete')"
+          v-if="hasPerm('device:update') || hasPerm('device:delete') || hasPerm('device:control')"
           class="header-btn batch-btn"
           :class="{ active: selectMode }"
           @click="toggleSelectMode"
@@ -967,6 +1029,14 @@ async function batchDeleteSelected() {
         <button v-if="hasPerm('device:update')" class="batch-bar-btn clear-btn" :disabled="batchOperating" @click="batchClearArea">
           <svg viewBox="0 0 24 24" fill="none" width="13" height="13"><path d="M3 6h18M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           清除区域
+        </button>
+        <button v-if="hasPerm('device:control')" class="batch-bar-btn light-on-btn" :disabled="batchOperating" @click="batchTurnOnSelected">
+          <Sunny class="batch-bar-icon" />
+          开灯
+        </button>
+        <button v-if="hasPerm('device:control')" class="batch-bar-btn light-off-btn" :disabled="batchOperating" @click="batchTurnOffSelected">
+          <Moon class="batch-bar-icon" />
+          关灯
         </button>
         <button v-if="hasPerm('device:update')" class="batch-bar-btn disable-btn" :disabled="batchOperating" @click="batchDisableSelected">
           <CircleClose class="batch-bar-icon" />
@@ -1465,6 +1535,18 @@ async function batchDeleteSelected() {
   color: #9a5a00;
 }
 .clear-btn:hover:not(:disabled) { background: rgba(245,158,11,0.16); color: #b46a00; }
+.light-on-btn {
+  background: rgba(250,204,21,0.12);
+  border: 1px solid rgba(217,119,6,0.24);
+  color: #9a5a00;
+}
+.light-on-btn:hover:not(:disabled) { background: rgba(250,204,21,0.18); color: #b45309; }
+.light-off-btn {
+  background: rgba(99,102,241,0.08);
+  border: 1px solid rgba(99,102,241,0.2);
+  color: #4f46e5;
+}
+.light-off-btn:hover:not(:disabled) { background: rgba(99,102,241,0.14); color: #4338ca; }
 .disable-btn {
   background: rgba(96,116,138,0.1);
   border: 1px solid rgba(96,116,138,0.22);
