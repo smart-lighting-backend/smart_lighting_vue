@@ -79,7 +79,7 @@ const buildSubmitPayload = () => {
 const rules = {
   username: [
     { required: true, message: '请输入用户名', trigger: 'blur' },
-    { pattern: /^[a-zA-Z0-9_]+$/, message: '用户名只能包含字母、数字和下划线', trigger: 'change' }
+    { pattern: /^[a-zA-Z0-9_]{4,20}$/, message: '用户名4-20位，只能包含字母、数字和下划线', trigger: 'change' }
   ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
@@ -430,7 +430,7 @@ onMounted(() => {
     >
       <ElForm ref="formRef" :model="formData" :rules="rules" label-width="100px">
         <ElFormItem label="用户名" prop="username">
-          <ElInput v-model="formData.username" :disabled="dialogType === 'edit'" placeholder="请输入用户名" />
+          <ElInput v-model="formData.username" :disabled="dialogType === 'edit'" placeholder="4-20位字母、数字或下划线" maxlength="20" show-word-limit />
         </ElFormItem>
         <ElFormItem label="密码" :prop="dialogType === 'add' ? 'password' : ''">
           <ElInput v-model="formData.password" type="password" placeholder="请输入密码" show-password />

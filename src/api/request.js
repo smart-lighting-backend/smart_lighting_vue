@@ -57,7 +57,10 @@ request.interceptors.response.use(
   error => {
     if (error.response?.status === 401) {
       clearAuth()
-      window.location.href = '/login'
+      // 已经在登录页就不做硬跳转，避免注册时被残留 Token 踢回刷新
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login'
+      }
     }
     return Promise.reject(error)
   }

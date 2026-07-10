@@ -12,6 +12,7 @@ const TOKEN_KEY       = 'smart_light_token'
 const USER_KEY        = 'smart_light_user'
 const PERMISSIONS_KEY = 'smart_light_permissions'
 const MENUS_KEY       = 'smart_light_menus'
+const AUTH_FRESH_KEY  = 'smart_light_auth_fresh'  // 标记认证数据是刚保存的
 
 // 响应式权限版本计数器 —— 每次 permissions 变更时递增，
 // useUserInfo 中的 computed 依赖此值，从而触发组件重新渲染
@@ -30,6 +31,11 @@ export function getPermVersionRef() {
  */
 export function login(username, password) {
   return request.post('/api/auth/login', { username, password })
+}
+
+/** 用户自助注册 */
+export function registerUser(data) {
+  return request.post('/api/auth/register', data)
 }
 
 /**
@@ -117,7 +123,23 @@ export function clearAuth() {
     s.removeItem(USER_KEY)
     s.removeItem(PERMISSIONS_KEY)
     s.removeItem(MENUS_KEY)
+    s.removeItem(AUTH_FRESH_KEY)
   })
+}
+
+/**
+ * 标记认证数据为刚保存的（注册/登录后调用，让导航守卫跳过 /me 校验）
+ */
+export function markAuthFresh() {
+  sessionStorage.setItem(AUTH_FRESH_KEY, String(Date.now()))
+}
+
+/**
+ * 检查认证数据是否是刚保存的（30 秒内）
+ */
+export function isAuthFresh() {
+  const ts = sessionStorage.getItem(AUTH_FRESH_KEY) || localStorage.getItem(AUTH_FRESH_KEY)
+  return ts && (Date.now() - Number(ts) < 35000)
 }
 
 /**

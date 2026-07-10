@@ -1,24 +1,161 @@
 <script setup>
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { login, saveAuth, savePermissions, saveMenus, getRoleLabel } from '../api/auth.js'
+import { login, registerUser, saveAuth, savePermissions, saveMenus, getRoleLabel, markAuthFresh } from '../api/auth.js'
+import { fetchRoleList } from '../api/role.js'
 
 const router = useRouter()
 const route = useRoute()
 
-// ─── 表单数据（API 只需 username + password，role 由后端 Token 返回）────────
+// ─── 模式：'login' | 'register' ─────────────────────────────────────────
+const mode = ref('login')
+const isLogin = computed(() => mode.value === 'login')
+
+function switchMode(m) {
+  mode.value = m
+  errorMsg.value = ''
+  registerError.value = ''
+}
+
+// ─── 登录表单 ────────────────────────────────────────────────────────────
 const form = reactive({
   username: '',
   password: '',
   remember: false,
 })
 
+// ─── 注册表单 ────────────────────────────────────────────────────────────
+const registerForm = reactive({
+  username: '',
+  password: '',
+  confirmPassword: '',
+  realName: '',
+  phone: '',
+  roleId: null,
+})
+const registerError = ref('')
+const registerLoading = ref(false)
+const roleList = ref([])
+const roleDropdownOpen = ref(false)
+
+async function loadRoles() {
+  // 先加载缓存（上次登录时保存的），让下拉框即时有数据
+  const cached = localStorage.getItem('smart_light_register_roles')
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached)
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        roleList.value = parsed
+      }
+    } catch { /* 缓存损坏忽略 */ }
+  }
+  // 再从 API 获取最新角色列表
+  try {
+    const res = await fetchRoleList()
+    let roles = []
+    const raw = res?.data
+    if (Array.isArray(raw)) {
+      roles = raw
+    } else if (raw?.records && Array.isArray(raw.records)) {
+      roles = raw.records
+    } else if (raw?.list && Array.isArray(raw.list)) {
+      roles = raw.list
+    } else if (Array.isArray(res)) {
+      roles = res
+    } else if (res?.rows && Array.isArray(res.rows)) {
+      roles = res.rows
+    }
+    const filtered = roles.filter(r => {
+      const code = r?.roleCode || r?.code || ''
+      return code !== 'SUPER_ADMIN'
+    })
+    if (filtered.length > 0) {
+      roleList.value = filtered
+      localStorage.setItem('smart_light_register_roles', JSON.stringify(filtered))
+      return
+    }
+  } catch {
+    // API 调用失败，走下面的兜底
+  }
+  // 兜底：无缓存也无 API 数据时用默认值
+  if (!cached) {
+    const fallback = [
+      { id: 2, name: '市政人员', roleCode: 'MUNICIPAL' },
+      { id: 3, name: '路灯管理员', roleCode: 'MAINTENANCE' },
+      { id: 4, name: '安全/应急人员', roleCode: 'EMERGENCY' },
+    ]
+    roleList.value = fallback
+  }
+}
+
+function selectRole(role) {
+  registerForm.roleId = role.id
+  roleDropdownOpen.value = false
+}
+
+const selectedRoleName = computed(() => {
+  if (!registerForm.roleId) return ''
+  const r = roleList.value.find(r => r.id === registerForm.roleId)
+  return r ? (r.name || r.roleCode) : ''
+})
+
+function validateRegister() {
+  if (!/^[a-zA-Z0-9_]{4,20}$/.test(registerForm.username)) return '用户名只能包含字母、数字和下划线（4-20位）'
+  if (!registerForm.password || registerForm.password.length < 8) return '密码至少 8 位'
+  if (registerForm.password !== registerForm.confirmPassword) return '两次密码输入不一致'
+  if (!registerForm.roleId) return '请选择角色'
+  return ''
+}
+
+async function handleRegister() {
+  registerError.value = ''
+  const err = validateRegister()
+  if (err) { registerError.value = err; return }
+  registerLoading.value = true
+  try {
+    // 清除可能残留的旧 Token，确保注册请求不携带 Authorization 头
+    ;[localStorage, sessionStorage].forEach(s => {
+      s.removeItem('smart_light_token')
+    })
+    const payload = {
+      username: registerForm.username,
+      password: registerForm.password,
+      roleId: registerForm.roleId,
+    }
+    if (registerForm.realName) payload.realName = registerForm.realName
+    if (registerForm.phone) payload.phone = registerForm.phone
+    await registerUser(payload)
+    // 注册成功 → 返回登录页，不自动登录
+    // 清空注册表单
+    registerForm.username = ''
+    registerForm.password = ''
+    registerForm.confirmPassword = ''
+    registerForm.realName = ''
+    registerForm.phone = ''
+    registerForm.roleId = null
+    // 切换到登录模式并显示成功提示
+    switchMode('login')
+    errorMsg.value = '注册成功，请使用新账号登录'
+  } catch (err) {
+    registerError.value = err?.message || '注册失败，请稍后重试'
+  } finally {
+    registerLoading.value = false
+  }
+}
+
+// ─── 模式切换：进入注册模式时自动加载角色列表 ────────────────────────────
+watch(mode, (m) => {
+  if (m === 'register') loadRoles()
+})
+
 // ─── UI 状态 ───────────────────────────────────────────────────────────────
 const loading  = ref(false)
 const showPwd  = ref(false)
+const showRegPwd = ref(false)
+const showRegConfirmPwd = ref(false)
 const errorMsg = ref('')
 
-// ─── 粒子画布动画 ──────────────────────────────────────────────────────────
+// ─── 粒子画布动画（优化版）───────────────────────────────────────────────────
 const canvasRef = ref(null)
 let animId = null
 
@@ -26,15 +163,28 @@ function initCanvas() {
   const canvas = canvasRef.value
   if (!canvas) return
   const ctx = canvas.getContext('2d')
+  let running = true
 
+  // ① 窗口大小变化时 debounce 重绘，避免频繁 resize 触发重排
+  let resizeTimer
   const resize = () => {
-    canvas.width  = window.innerWidth
-    canvas.height = window.innerHeight
+    clearTimeout(resizeTimer)
+    resizeTimer = setTimeout(() => {
+      canvas.width  = window.innerWidth
+      canvas.height = window.innerHeight
+    }, 120)
   }
   resize()
   window.addEventListener('resize', resize)
 
-  const PARTICLE_COUNT = 80
+  // ② 页面不可见时暂停动画，释放 GPU
+  const onVisibility = () => {
+    running = !document.hidden
+    if (running) draw()
+  }
+  document.addEventListener('visibilitychange', onVisibility)
+
+  const PARTICLE_COUNT = 60  // 80→60，人眼无感知但减少 25% 计算量
   const particles = Array.from({ length: PARTICLE_COUNT }, () => ({
     x:   Math.random() * canvas.width,
     y:   Math.random() * canvas.height,
@@ -45,34 +195,34 @@ function initCanvas() {
   }))
 
   const draw = () => {
+    if (!running) return  // 页面隐藏时不循环
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
     particles.forEach(p => {
-      // 移动
       p.x += p.vx; p.y += p.vy
       if (p.x < 0) p.x = canvas.width
       if (p.x > canvas.width) p.x = 0
       if (p.y < 0) p.y = canvas.height
       if (p.y > canvas.height) p.y = 0
 
-      // 绘制粒子
       ctx.beginPath()
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
       ctx.fillStyle = `rgba(100, 200, 255, ${p.a})`
       ctx.fill()
     })
 
-    // 绘制连线
+    // ③ 连线阈值降低 120→100，减少 stroke 调用
     for (let i = 0; i < particles.length; i++) {
       for (let j = i + 1; j < particles.length; j++) {
         const dx = particles[i].x - particles[j].x
         const dy = particles[i].y - particles[j].y
+        if (dx > 100 || dy > 100) continue  // 先做粗略判断，跳过过远的对
         const dist = Math.sqrt(dx * dx + dy * dy)
-        if (dist < 120) {
+        if (dist < 100) {
           ctx.beginPath()
           ctx.moveTo(particles[i].x, particles[i].y)
           ctx.lineTo(particles[j].x, particles[j].y)
-          ctx.strokeStyle = `rgba(50, 150, 230, ${0.15 * (1 - dist / 120)})`
+          ctx.strokeStyle = `rgba(50, 150, 230, ${0.15 * (1 - dist / 100)})`
           ctx.lineWidth = 0.5
           ctx.stroke()
         }
@@ -84,20 +234,34 @@ function initCanvas() {
   draw()
 
   return () => {
-    window.removeEventListener('resize', resize)
+    running = false
     cancelAnimationFrame(animId)
+    window.removeEventListener('resize', resize)
+    document.removeEventListener('visibilitychange', onVisibility)
   }
 }
 
 // ─── 生命周期 ──────────────────────────────────────────────────────────────
 let cleanupCanvas = null
-onMounted(() => {
+onMounted(async () => {
   cleanupCanvas = initCanvas()
-  // 被"账号已停用"踢回登录页时显示提示
+
+  // ═══ 从数据库获取角色列表 ══════════════════════════
+  // GET /api/roles 已是公开接口，无需 Token 即可获取数据库真实角色数据
+  loadRoles()
+
+  // 清除残留认证信息
+  ;[localStorage, sessionStorage].forEach(s => {
+    s.removeItem('smart_light_token')
+    s.removeItem('smart_light_user')
+  })
+
   if (route.query.disabled === '1') {
     errorMsg.value = route.query.msg
       ? decodeURIComponent(route.query.msg)
       : '账号已停用，请联系管理员'
+  } else if (route.query.register === '1') {
+    switchMode('register')
   }
 })
 onUnmounted(() => { cleanupCanvas?.() })
@@ -191,6 +355,18 @@ async function handleLogin() {
     }
 
     saveAuth(token, userInfo, form.remember)
+    markAuthFresh()
+    // 登录后获取最新角色列表并缓存，供下次注册时使用
+    fetchRoleList().then(res => {
+      let roles = []
+      const raw = res?.data
+      if (Array.isArray(raw)) roles = raw
+      else if (raw?.records && Array.isArray(raw.records)) roles = raw.records
+      else if (raw?.list && Array.isArray(raw.list)) roles = raw.list
+      else if (Array.isArray(res)) roles = res
+      const filtered = roles.filter(r => (r?.roleCode || r?.code || '') !== 'SUPER_ADMIN')
+      if (filtered.length > 0) localStorage.setItem('smart_light_register_roles', JSON.stringify(filtered))
+    }).catch(() => {})
     const redirect = route.query.redirect || '/dashboard'
     router.push(redirect)
   } catch (err) {
@@ -202,7 +378,10 @@ async function handleLogin() {
 }
 
 function handleKeydown(e) {
-  if (e.key === 'Enter') handleLogin()
+  if (e.key === 'Enter') {
+    if (isLogin.value) handleLogin()
+    else handleRegister()
+  }
 }
 </script>
 
@@ -236,82 +415,241 @@ function handleKeydown(e) {
       </div>
 
       <!-- 登录卡片 -->
-      <div class="login-card">
+      <div class="login-card" :class="{ 'register-card': !isLogin }">
         <!-- 卡片内部光效 -->
         <div class="card-shimmer" />
 
-        <!-- 用户名 -->
-        <div class="form-group">
-          <label class="form-label">用户名</label>
-          <div class="input-wrap" :class="{ 'has-value': form.username }">
-            <span class="input-icon">
-              <svg viewBox="0 0 24 24" fill="none"><path d="M12 12c2.7 0 4-1.8 4-4s-1.3-4-4-4-4 1.8-4 4 1.3 4 4 4zm0 2c-2.67 0-8 1.34-8 4v1a1 1 0 001 1h14a1 1 0 001-1v-1c0-2.66-5.33-4-8-4z" fill="currentColor"/></svg>
-            </span>
-            <input
-              id="login-username"
-              v-model="form.username"
-              type="text"
-              class="form-input"
-              placeholder="请输入管理员账号"
-              autocomplete="username"
-            />
+        <!-- ═════ 登录表单 ═════ -->
+        <template v-if="isLogin">
+          <!-- 用户名 -->
+          <div class="form-group">
+            <label class="form-label">用户名</label>
+            <div class="input-wrap" :class="{ 'has-value': form.username }">
+              <span class="input-icon">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M12 12c2.7 0 4-1.8 4-4s-1.3-4-4-4-4 1.8-4 4 1.3 4 4 4zm0 2c-2.67 0-8 1.34-8 4v1a1 1 0 001 1h14a1 1 0 001-1v-1c0-2.66-5.33-4-8-4z" fill="currentColor"/></svg>
+              </span>
+              <input
+                id="login-username"
+                v-model="form.username"
+                type="text"
+                class="form-input"
+                placeholder="请输入管理员账号"
+                autocomplete="username"
+              />
+            </div>
           </div>
-        </div>
 
-        <!-- 密码 -->
-        <div class="form-group">
-          <label class="form-label">密码</label>
-          <div class="input-wrap" :class="{ 'has-value': form.password }">
-            <span class="input-icon">
-              <svg viewBox="0 0 24 24" fill="none"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z" fill="currentColor"/></svg>
-            </span>
-            <input
-              id="login-password"
-              v-model="form.password"
-              :type="showPwd ? 'text' : 'password'"
-              class="form-input"
-              placeholder="请输入密码"
-              autocomplete="current-password"
-            />
-            <button class="toggle-pwd" type="button" @click="showPwd = !showPwd">
-              <svg v-if="!showPwd" viewBox="0 0 24 24" fill="none"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" fill="currentColor"/></svg>
-              <svg v-else viewBox="0 0 24 24" fill="none"><path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z" fill="currentColor"/></svg>
-            </button>
+          <!-- 密码 -->
+          <div class="form-group">
+            <label class="form-label">密码</label>
+            <div class="input-wrap" :class="{ 'has-value': form.password }">
+              <span class="input-icon">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z" fill="currentColor"/></svg>
+              </span>
+              <input
+                id="login-password"
+                v-model="form.password"
+                :type="showPwd ? 'text' : 'password'"
+                class="form-input"
+                placeholder="请输入密码"
+                autocomplete="current-password"
+              />
+              <button class="toggle-pwd" type="button" @click="showPwd = !showPwd">
+                <svg v-if="!showPwd" viewBox="0 0 24 24" fill="none"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" fill="currentColor"/></svg>
+                <svg v-else viewBox="0 0 24 24" fill="none"><path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z" fill="currentColor"/></svg>
+              </button>
+            </div>
           </div>
-        </div>
 
-        <!-- 角色由后端 Token 返回，此处不需要选择框 -->
+          <!-- 角色由后端 Token 返回，此处不需要选择框 -->
 
-        <!-- 记住账号 & 忘记密码 -->
-        <div class="form-row">
-          <label class="checkbox-label">
-            <input id="login-remember" v-model="form.remember" type="checkbox" class="checkbox-input" />
-            <span class="checkbox-custom" />
-            <span class="checkbox-text">记住账号</span>
-          </label>
-          <a href="#" class="forgot-link">忘记密码?</a>
-        </div>
-
-        <!-- 错误提示 -->
-        <transition name="fade">
-          <div v-if="errorMsg" class="error-tip">
-            <svg viewBox="0 0 24 24" fill="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" fill="currentColor"/></svg>
-            {{ errorMsg }}
+          <!-- 记住账号 & 忘记密码 -->
+          <div class="form-row">
+            <label class="checkbox-label">
+              <input id="login-remember" v-model="form.remember" type="checkbox" class="checkbox-input" />
+              <span class="checkbox-custom" />
+              <span class="checkbox-text">记住账号</span>
+            </label>
+            <a href="#" class="forgot-link">忘记密码?</a>
           </div>
-        </transition>
 
-        <!-- 登录按钮 -->
-        <button
-          id="login-submit"
-          class="login-btn"
-          :class="{ loading }"
-          :disabled="loading"
-          type="button"
-          @click="handleLogin"
-        >
-          <span v-if="!loading" class="btn-text">登&ensp;录</span>
-          <span v-else class="btn-spinner" />
-        </button>
+          <!-- 错误提示 -->
+          <transition name="fade">
+            <div v-if="errorMsg" class="error-tip">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" fill="currentColor"/></svg>
+              {{ errorMsg }}
+            </div>
+          </transition>
+
+          <!-- 登录按钮 -->
+          <button
+            id="login-submit"
+            class="login-btn"
+            :class="{ loading }"
+            :disabled="loading"
+            type="button"
+            @click="handleLogin"
+          >
+            <span v-if="!loading" class="btn-text">登&ensp;录</span>
+            <span v-else class="btn-spinner" />
+          </button>
+
+          <!-- 切换注册 -->
+          <div class="switch-link">
+            还没有账号？
+            <span class="switch-btn" @click="switchMode('register')">注册账号</span>
+          </div>
+        </template>
+
+        <!-- ═════ 注册表单 ═════ -->
+        <template v-else>
+          <!-- 用户名 -->
+          <div class="form-group">
+            <label class="form-label">用户名</label>
+            <div class="input-wrap" :class="{ 'has-value': registerForm.username }">
+              <span class="input-icon">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M12 12c2.7 0 4-1.8 4-4s-1.3-4-4-4-4 1.8-4 4 1.3 4 4 4zm0 2c-2.67 0-8 1.34-8 4v1a1 1 0 001 1h14a1 1 0 001-1v-1c0-2.66-5.33-4-8-4z" fill="currentColor"/></svg>
+              </span>
+              <input
+                v-model="registerForm.username"
+                type="text"
+                class="form-input"
+                placeholder="4-20位字母、数字或下划线"
+                maxlength="20"
+              />
+            </div>
+          </div>
+
+          <!-- 密码 -->
+          <div class="form-group">
+            <label class="form-label">密码</label>
+            <div class="input-wrap" :class="{ 'has-value': registerForm.password }">
+              <span class="input-icon">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z" fill="currentColor"/></svg>
+              </span>
+              <input
+                v-model="registerForm.password"
+                :type="showRegPwd ? 'text' : 'password'"
+                class="form-input"
+                placeholder="至少 8 位密码"
+              />
+              <button class="toggle-pwd" type="button" @click="showRegPwd = !showRegPwd">
+                <svg v-if="!showRegPwd" viewBox="0 0 24 24" fill="none"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" fill="currentColor"/></svg>
+                <svg v-else viewBox="0 0 24 24" fill="none"><path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z" fill="currentColor"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- 确认密码 -->
+          <div class="form-group">
+            <label class="form-label">确认密码</label>
+            <div class="input-wrap" :class="{ 'has-value': registerForm.confirmPassword }">
+              <span class="input-icon">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z" fill="currentColor"/></svg>
+              </span>
+              <input
+                v-model="registerForm.confirmPassword"
+                :type="showRegConfirmPwd ? 'text' : 'password'"
+                class="form-input"
+                placeholder="再次输入密码"
+              />
+              <button class="toggle-pwd" type="button" @click="showRegConfirmPwd = !showRegConfirmPwd">
+                <svg v-if="!showRegConfirmPwd" viewBox="0 0 24 24" fill="none"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" fill="currentColor"/></svg>
+                <svg v-else viewBox="0 0 24 24" fill="none"><path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z" fill="currentColor"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- 真实姓名（选填） -->
+          <div class="form-group">
+            <label class="form-label">真实姓名</label>
+            <div class="input-wrap" :class="{ 'has-value': registerForm.realName }">
+              <span class="input-icon">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M12 12c2.7 0 4-1.8 4-4s-1.3-4-4-4-4 1.8-4 4 1.3 4 4 4zm0 2c-2.67 0-8 1.34-8 4v1a1 1 0 001 1h14a1 1 0 001-1v-1c0-2.66-5.33-4-8-4z" fill="currentColor"/></svg>
+              </span>
+              <input
+                v-model="registerForm.realName"
+                type="text"
+                class="form-input"
+                placeholder="真实姓名（选填）"
+                maxlength="20"
+              />
+            </div>
+          </div>
+
+          <!-- 手机号（选填） -->
+          <div class="form-group">
+            <label class="form-label">手机号</label>
+            <div class="input-wrap" :class="{ 'has-value': registerForm.phone }">
+              <span class="input-icon">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z" fill="currentColor"/></svg>
+              </span>
+              <input
+                v-model="registerForm.phone"
+                type="text"
+                class="form-input"
+                placeholder="手机号（选填）"
+                maxlength="11"
+              />
+            </div>
+          </div>
+
+          <!-- 角色选择（自定义下拉） -->
+          <div class="form-group">
+            <label class="form-label">角色</label>
+            <div class="select-wrap" @click="roleDropdownOpen = !roleDropdownOpen">
+              <span class="input-icon">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" fill="currentColor"/></svg>
+              </span>
+              <span class="select-value" :class="{ placeholder: !registerForm.roleId }">
+                {{ selectedRoleName || '请选择角色' }}
+              </span>
+              <span class="select-arrow" :class="{ open: roleDropdownOpen }">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z" fill="currentColor"/></svg>
+              </span>
+            </div>
+            <transition name="dropdown">
+              <div v-if="roleDropdownOpen" class="dropdown-list" @click.stop>
+                <div v-if="roleList.length === 0" class="dropdown-item empty-hint">暂无可用角色</div>
+                <div
+                  v-for="r in roleList"
+                  :key="r.id"
+                  class="dropdown-item"
+                  :class="{ active: r.id === registerForm.roleId }"
+                  @click="selectRole(r)"
+                >
+                  {{ r.name || r.roleCode }}
+                </div>
+              </div>
+            </transition>
+          </div>
+
+          <!-- 注册错误提示 -->
+          <transition name="fade">
+            <div v-if="registerError" class="error-tip">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" fill="currentColor"/></svg>
+              {{ registerError }}
+            </div>
+          </transition>
+
+          <!-- 注册按钮 -->
+          <button
+            class="login-btn"
+            :class="{ loading: registerLoading }"
+            :disabled="registerLoading"
+            type="button"
+            @click="handleRegister"
+          >
+            <span v-if="!registerLoading" class="btn-text">注&ensp;册</span>
+            <span v-else class="btn-spinner" />
+          </button>
+
+          <!-- 切换登录 -->
+          <div class="switch-link">
+            已有账号？
+            <span class="switch-btn" @click="switchMode('login')">去登录</span>
+          </div>
+        </template>
 
 
       </div>
@@ -355,17 +693,20 @@ function handleKeydown(e) {
   width: 600px; height: 600px;
   background: radial-gradient(circle, rgba(0, 80, 160, 0.35) 0%, transparent 70%);
   top: -150px; left: -150px;
+  will-change: transform;
 }
 .glow-2 {
   width: 500px; height: 500px;
   background: radial-gradient(circle, rgba(0, 150, 255, 0.2) 0%, transparent 70%);
   bottom: -100px; right: -100px;
+  will-change: transform;
 }
 .glow-3 {
   width: 400px; height: 400px;
   background: radial-gradient(circle, rgba(0, 60, 120, 0.3) 0%, transparent 70%);
   top: 50%; left: 50%;
   transform: translate(-50%, -50%);
+  will-change: transform;
 }
 
 /* 扫描线 */
@@ -610,6 +951,16 @@ function handleKeydown(e) {
   background: rgba(0, 150, 220, 0.2);
   color: #4dd0e1;
 }
+.dropdown-item.empty-hint {
+  color: rgba(150, 180, 200, 0.5);
+  cursor: default;
+  text-align: center;
+  font-size: 13px;
+}
+.dropdown-item.empty-hint:hover {
+  background: transparent;
+  color: rgba(150, 180, 200, 0.5);
+}
 
 /* 下拉动画 */
 .dropdown-enter-active, .dropdown-leave-active { transition: all 0.2s ease; }
@@ -743,5 +1094,43 @@ function handleKeydown(e) {
   font-size: 12px;
   color: rgba(100, 160, 200, 0.4);
   margin-top: 20px;
+}
+
+/* ─── 模式切换链接 ──────────────────────────────────────────────────────────── */
+.switch-link {
+  text-align: center;
+  font-size: 13px;
+  color: rgba(150, 210, 240, 0.65);
+  margin-top: 18px;
+}
+.switch-link a, .switch-link .switch-btn {
+  color: rgba(77, 208, 225, 0.8);
+  text-decoration: none;
+  transition: color 0.2s;
+  cursor: pointer;
+}
+.switch-link a:hover, .switch-link .switch-btn:hover { color: #4dd0e1; text-decoration: underline; }
+
+.select-value.placeholder { color: rgba(100, 170, 210, 0.45); }
+
+/* ─── 注册模式卡片紧凑调整 ────────────────────────────────────────────────────── */
+.register-card {
+  padding: 22px 32px 18px !important;
+  overflow: visible !important;  /* 让角色下拉列表不被裁剪 */
+}
+.register-card .form-group {
+  margin-bottom: 12px;
+}
+.register-card .form-input {
+  height: 42px;
+  font-size: 13px;
+}
+.register-card .form-label {
+  margin-bottom: 5px;
+  font-size: 12px;
+}
+.register-card .login-btn {
+  height: 46px;
+  font-size: 16px;
 }
 </style>

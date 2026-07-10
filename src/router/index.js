@@ -6,7 +6,7 @@
  * - 登录后从 /me 刷新 permissions 和 menus
  */
 import { createRouter, createWebHistory } from 'vue-router'
-import { getToken, clearAuth, saveAuth, savePermissions, saveMenus, fetchCurrentUser, getUserInfo, getPermissions } from '../api/auth.js'
+import { getToken, clearAuth, saveAuth, savePermissions, saveMenus, fetchCurrentUser, getUserInfo, getPermissions, isAuthFresh } from '../api/auth.js'
 
 const routes = [
   {
@@ -175,8 +175,8 @@ router.beforeEach(async (to, from) => {
 
   const hasCachedUser = Boolean(getUserInfo())
 
-  // 定期从 /me 刷新权限和菜单（30 秒间隔，确保角色权限变更后及时生效）
-  if (!hasCachedUser || Date.now() - lastRefreshTime > REFRESH_INTERVAL) {
+  // 数据刚由注册/登录保存（35 秒内），跳过 /me 校验
+  if (!hasCachedUser || (!isAuthFresh() && Date.now() - lastRefreshTime > REFRESH_INTERVAL)) {
     try {
       const res = await fetchCurrentUser()
       if (res?.data) {

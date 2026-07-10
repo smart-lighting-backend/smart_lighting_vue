@@ -13,7 +13,7 @@ const router = useRouter()
 const { username, roleName, permissions } = useUserInfo()
 
 const showManual = ref(false)
-const showUserMenu = ref(false)
+const showUserInfo = ref(false)
 const alarmCount = ref(0)
 
 // ═══ 沉浸模式（侧边栏 + 顶栏收起） ═══
@@ -309,7 +309,7 @@ onMounted(async () => {
         </template>
       </nav>
 
-      <div class="sidebar-user" @click="showUserMenu = !showUserMenu">
+      <div class="sidebar-user" @click="showUserInfo = true">
         <div class="user-avatar">
           <svg viewBox="0 0 24 24" fill="none"><path d="M12 12c2.7 0 4-1.8 4-4s-1.3-4-4-4-4 1.8-4 4 1.3 4 4 4zm0 2c-2.67 0-8 1.34-8 4v1a1 1 0 001 1h14a1 1 0 001-1v-1c0-2.66-5.33-4-8-4z" fill="currentColor"/></svg>
         </div>
@@ -317,14 +317,6 @@ onMounted(async () => {
           <span class="user-name">{{ username }}</span>
           <span class="user-role">{{ roleName }}</span>
         </div>
-        <transition name="fade-up">
-          <div v-if="showUserMenu" class="user-menu">
-            <div class="user-menu-item" @click.stop="logout">
-              <svg viewBox="0 0 24 24" fill="none"><path d="M16 17l5-5-5-5M21 12H9M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-              退出登录
-            </div>
-          </div>
-        </transition>
       </div>
     </aside>
 
@@ -362,6 +354,39 @@ onMounted(async () => {
     </div>
 
     <ManualControlModal v-if="showManual" @close="showManual = false" />
+
+    <!-- 用户基本信息弹窗 -->
+    <Transition name="fade-up">
+      <div v-if="showUserInfo" class="user-info-overlay" @click.self="showUserInfo = false">
+        <div class="user-info-card">
+          <button class="ui-close" @click="showUserInfo = false">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+          <div class="ui-header">
+            <div class="ui-avatar">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 12c2.7 0 4-1.8 4-4s-1.3-4-4-4-4 1.8-4 4 1.3 4 4 4zm0 2c-2.67 0-8 1.34-8 4v1a1 1 0 001 1h14a1 1 0 001-1v-1c0-2.66-5.33-4-8-4z" fill="currentColor"/></svg>
+            </div>
+            <div class="ui-title">用户信息</div>
+          </div>
+          <div class="ui-body">
+            <div class="ui-row">
+              <span class="ui-label">用户名</span>
+              <span class="ui-value">{{ username }}</span>
+            </div>
+            <div class="ui-row">
+              <span class="ui-label">角色</span>
+              <span class="ui-value">{{ roleName }}</span>
+            </div>
+          </div>
+          <div class="ui-footer">
+            <button class="ui-logout-btn" @click="logout">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M16 17l5-5-5-5M21 12H9M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              退出登录
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -532,31 +557,6 @@ onMounted(async () => {
 .user-name { font-size: 12px; font-weight: 600; color: #d0eaf8; }
 .user-role { font-size: 10px; color: rgba(120, 180, 210, 0.55); margin-top: 1px; }
 
-.user-menu {
-  position: absolute;
-  bottom: calc(100% + 4px);
-  left: 10px; right: 10px;
-  background: rgba(4, 20, 50, 0.96);
-  border: 1px solid rgba(0, 120, 180, 0.4);
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-  backdrop-filter: blur(16px);
-  z-index: 100;
-}
-.user-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  font-size: 13px;
-  color: rgba(180, 220, 240, 0.85);
-  cursor: pointer;
-  transition: background 0.2s;
-}
-.user-menu-item svg { width: 16px; height: 16px; }
-.user-menu-item:hover { background: rgba(0,150,220,0.15); color: #4dd0e1; }
-
 .fade-up-enter-active, .fade-up-leave-active { transition: all 0.2s; }
 .fade-up-enter-from, .fade-up-leave-to { opacity: 0; transform: translateY(6px); }
 
@@ -690,6 +690,118 @@ onMounted(async () => {
   opacity: 0;
   pointer-events: none;
 }
+
+/* ── 用户信息弹窗 ── */
+.user-info-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.user-info-card {
+  width: 340px;
+  background: linear-gradient(180deg, #0a1e3a 0%, #060e1f 100%);
+  border: 1px solid rgba(0, 150, 220, 0.25);
+  border-radius: 16px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 150, 220, 0.1) inset;
+  position: relative;
+  overflow: hidden;
+}
+.ui-close {
+  position: absolute;
+  top: 12px; right: 12px;
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  border: none;
+  background: rgba(255,255,255,0.05);
+  color: rgba(140, 200, 230, 0.6);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+.ui-close:hover {
+  background: rgba(255,80,80,0.2);
+  color: #ff8080;
+}
+.ui-close svg { width: 16px; height: 16px; }
+.ui-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 32px 24px 20px;
+}
+.ui-avatar {
+  width: 56px; height: 56px;
+  background: linear-gradient(135deg, rgba(0, 150, 220, 0.3), rgba(0, 80, 160, 0.5));
+  border: 2px solid rgba(77, 208, 225, 0.3);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+.ui-avatar svg { width: 28px; height: 28px; color: #4dd0e1; }
+.ui-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #e0f4ff;
+  letter-spacing: 1px;
+}
+.ui-body {
+  padding: 0 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ui-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: rgba(0, 60, 120, 0.15);
+  border: 1px solid rgba(0, 120, 180, 0.15);
+  border-radius: 8px;
+}
+.ui-label {
+  font-size: 13px;
+  color: rgba(140, 200, 230, 0.7);
+}
+.ui-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #d0eaf8;
+}
+.ui-footer {
+  padding: 0 24px 24px;
+}
+.ui-logout-btn {
+  width: 100%;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(200, 50, 50, 0.15);
+  border: 1px solid rgba(220, 80, 80, 0.3);
+  border-radius: 10px;
+  color: #ff8080;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.ui-logout-btn:hover {
+  background: rgba(200, 50, 50, 0.3);
+  border-color: rgba(220, 80, 80, 0.6);
+  color: #ffb0b0;
+}
+.ui-logout-btn svg { width: 18px; height: 18px; }
 </style>
 
 <style>
