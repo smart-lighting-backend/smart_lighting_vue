@@ -1,7 +1,7 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { fetchStrategyList, fetchStrategyHistory, toggleStrategy, deleteStrategy } from '../api/strategy.js'
+import { fetchStrategyList, fetchStrategyHistory, toggleStrategy, deleteStrategy, testStrategy } from '../api/strategy.js'
 import { ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElInputNumber, ElButton, ElPagination, ElIcon, ElMessage, ElMessageBox, ElDialog, ElNotification } from 'element-plus'
 import { Search, Refresh, Timer } from '@element-plus/icons-vue'
 import { useUserInfo } from '../composables/useUserInfo.js'
@@ -57,20 +57,29 @@ async function loadData() {
     if (res && res.data) {
       const list = Array.isArray(res.data) ? res.data : (res.data.records || res.data.list || [])
       strategies.value = list.map(item => {
-        let group = '--', startTime = '--', endTime = '--'
+        let group = '', startTime = '', endTime = ''
         if (item.conditions && typeof item.conditions === 'string') {
           try {
             const cond = JSON.parse(item.conditions)
             if (cond.group) group = cond.group
-            if (cond.startTime) startTime = cond.startTime
-            if (cond.endTime) endTime = cond.endTime
+            // 优先 time_range，其次 startTime/endTime
+            if (cond.time_range) {
+              const parts = cond.time_range.split('-')
+              if (parts.length === 2) { startTime = parts[0]; endTime = parts[1] }
+            } else {
+              if (cond.startTime) startTime = cond.startTime
+              if (cond.endTime) endTime = cond.endTime
+            }
           } catch (e) {}
         }
+        // 回退：用 effective_time 字段
+        const timeDisplay = (startTime && endTime) ? `${startTime} — ${endTime}`
+          : (item.effectiveTime ? item.effectiveTime : '全天')
+        const groupDisplay = group || item.policyType || ''
         return {
           ...item,
-          group,
-          startTime,
-          endTime,
+          groupDisplay,
+          timeDisplay,
           lastTrigger: item.lastTriggerTime || item.lastTrigger || '--',
           triggerCount: item.triggerCount || 0
         }
@@ -100,6 +109,34 @@ function handleReset() {
 
 onMounted(loadData)
 
+// ── 模拟测试 ────────────────────────────────────────────────────────────────
+const testVisible = ref(false)
+const testLoading = ref(false)
+const testResult = ref(null)
+const testInput = reactive({
+  illuminance: 20, temperature: 26, humidity: 60,
+  pir: 0, trafficFlow: 5, currentTime: '23:00'
+})
+const hasAnyTestHit = computed(() => testResult.value?.allResults?.some(r => r.hit) || testResult.value?.matched)
+
+async function runTest() {
+  testLoading.value = true
+  testResult.value = null
+  try {
+    const payload = {
+      illuminance: testInput.illuminance,
+      temperature: testInput.temperature,
+      humidity: testInput.humidity,
+      pir: testInput.pir,
+      trafficFlow: testInput.trafficFlow,
+      currentTime: testInput.currentTime,
+    }
+    const res = await testStrategy(payload)
+    testResult.value = res?.data || null
+  } catch { testResult.value = { matched: false, matchedPolicy: null } }
+  testLoading.value = false
+}
+
 async function toggle(s) {
   s.enabled = !s.enabled
   await toggleStrategy(s.id, s.enabled)
@@ -127,10 +164,16 @@ async function remove(s) {
         <h1 class="page-title">策略配置</h1>
         <p class="page-sub">管理路灯自动调节规则，基于环境感知与时间调度</p>
       </div>
-      <button v-if="hasPerm('policy:create')" class="create-btn" @click="router.push('/strategy/create')">
-        <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        新建策略
-      </button>
+      <div class="header-actions">
+        <button v-if="hasPerm('policy:create')" class="create-btn" @click="router.push('/strategy/create')">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          新建策略
+        </button>
+        <button class="test-btn" @click="testVisible = true">
+          <svg viewBox="0 0 24 24" fill="none" style="width:15px;height:15px"><path d="M9 2v2.5M15 2v2.5M2 9h2.5M2 15h2.5M19.5 9H22M19.5 15H22M7 7h10a2 2 0 012 2v6a2 2 0 01-2 2H7a2 2 0 01-2-2V9a2 2 0 012-2z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="12" cy="12" r="2.5" stroke="currentColor" stroke-width="1.5"/></svg>
+          模拟测试
+        </button>
+      </div>
     </div>
 
     <!-- 搜索表单 -->
@@ -173,8 +216,8 @@ async function remove(s) {
         <div class="sc-left">
           <div class="sc-name">{{ s.name }}</div>
           <div class="sc-meta">
-            <span class="sc-tag">{{ s.group }}</span>
-            <span class="sc-time">{{ s.startTime }} — {{ s.endTime }}</span>
+            <span v-if="s.groupDisplay" class="sc-tag">{{ s.groupDisplay }}</span>
+            <span class="sc-time">{{ s.timeDisplay }}</span>
           </div>
           <div class="sc-stats">
             触发次数：<strong>{{ s.triggerCount }}</strong> &nbsp;·&nbsp;
@@ -211,6 +254,31 @@ async function remove(s) {
       </div>
     </ElDialog>
 
+    <!-- 模拟测试弹窗 -->
+    <ElDialog v-model="testVisible" title="策略模拟测试" width="500px" top="5vh">
+      <div class="test-form">
+        <div class="test-field"><label>光照强度 (Lux)</label><input v-model.number="testInput.illuminance" type="number" class="field-input" /></div>
+        <div class="test-field"><label>温度 (°C)</label><input v-model.number="testInput.temperature" type="number" class="field-input" /></div>
+        <div class="test-field"><label>湿度 (%)</label><input v-model.number="testInput.humidity" type="number" class="field-input" /></div>
+        <div class="test-field"><label>人体红外 (0/1)</label><input v-model.number="testInput.pir" type="number" min="0" max="1" class="field-input" /></div>
+        <div class="test-field"><label>车流量 (/min)</label><input v-model.number="testInput.trafficFlow" type="number" class="field-input" /></div>
+        <div class="test-field"><label>模拟时间</label><input v-model="testInput.currentTime" type="time" class="field-input" /></div>
+        <button class="search-btn" @click="runTest" :disabled="testLoading">{{ testLoading ? '测试中...' : '开始测试' }}</button>
+      </div>
+      <div v-if="testResult" class="test-result">
+        <div v-if="testResult.matched" class="test-match">
+          匹配成功！命中策略 <strong>{{ testResult.matchedPolicy }}</strong>，执行 {{ testResult.matchedAction }}
+        </div>
+        <div v-else-if="!hasAnyTestHit" class="test-nomatch">未匹配任何策略 — 当前条件不满足任何已启用策略</div>
+        <div v-if="testResult.allResults?.length" class="test-all">
+          <div v-for="r in testResult.allResults" :key="r.policyId" class="test-policy-row" :class="{ hit: r.hit }">
+            <span>{{ r.policyName }}</span>
+            <span class="test-tag">{{ r.hit ? '命中' : '未命中' }}</span>
+          </div>
+        </div>
+      </div>
+    </ElDialog>
+
     <!-- 分页 -->
     <div class="pagination-wrapper" v-if="total > 0">
       <ElPagination
@@ -230,6 +298,7 @@ async function remove(s) {
 <style scoped>
 .strategy-page { padding: 24px 28px; color: #1d3148; }
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; }
+.header-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .search-bar {
   background: rgba(255,255,255,0.94) !important;
   border: 1px solid rgba(0,141,230,0.16) !important;
@@ -341,4 +410,58 @@ async function remove(s) {
 .hi-device { color: #006fc2; min-width: 80px; font-weight: 700; }
 .hi-action { color: #1d3148; font-weight: 600; }
 .empty-hint { text-align: center; padding: 24px; color: #40566f; font-weight: 600; }
+
+/* ── 模拟测试按钮与弹窗 ── */
+.test-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 16px; border-radius: 7px;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+  color: #006fc2; background: rgba(232,246,255,0.9);
+  border: 1px solid rgba(0,141,230,0.2);
+  transition: all 0.2s;
+}
+.test-btn:hover { background: #ffffff; border-color: rgba(0,141,230,0.36); color: #008de6; }
+
+.test-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.test-field { display: flex; flex-direction: column; gap: 2px; }
+.test-field label { font-size: 12px; color: #40566f; font-weight: 700; }
+.test-field .field-input {
+  width: 100px; padding: 6px 8px; border: 1px solid rgba(0,141,230,0.2);
+  border-radius: 6px; font-size: 13px; color: #1d3148; background: #fff; outline: none;
+}
+.test-field .field-input:focus { border-color: rgba(0,141,230,0.45); box-shadow: 0 0 0 3px rgba(0,141,230,0.08); }
+.search-btn {
+  height: 34px; padding: 0 16px; border-radius: 7px;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+  color: #fff; background: linear-gradient(135deg, #008de6, #21c8dc);
+  border: 1px solid rgba(0,141,230,0.18);
+  box-shadow: 0 10px 22px rgba(0,141,230,0.22);
+  transition: all 0.2s;
+}
+.search-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 12px 26px rgba(0,141,230,0.28); }
+.search-btn:disabled { opacity: 0.48; cursor: not-allowed; }
+
+.test-result { margin-top: 14px; }
+.test-match {
+  padding: 10px 14px; background: rgba(16,185,129,0.08);
+  border: 1px solid rgba(16,185,129,0.22); border-radius: 8px;
+  color: #0d8b62; font-size: 13px; font-weight: 700;
+}
+.test-nomatch {
+  padding: 10px 14px; background: rgba(229,72,77,0.06);
+  border: 1px solid rgba(229,72,77,0.16); border-radius: 8px;
+  color: #c62f36; font-size: 13px; font-weight: 700;
+}
+.test-all { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.test-policy-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 10px; border-radius: 6px;
+  border: 1px solid rgba(96,116,138,0.12); font-size: 13px; font-weight: 650; color: #60748a;
+}
+.test-policy-row.hit { border-color: rgba(16,185,129,0.24); color: #0d8b62; }
+.test-tag {
+  font-size: 11px; padding: 2px 8px; border-radius: 4px;
+  background: rgba(96,116,138,0.08); color: #60748a; font-weight: 800;
+}
+.test-policy-row.hit .test-tag { background: rgba(16,185,129,0.12); color: #0d8b62; }
 </style>

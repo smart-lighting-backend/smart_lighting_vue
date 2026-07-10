@@ -4,12 +4,12 @@ import { sendChatMessage, diagnoseDevice } from '../api/assistant.js'
 import { fetchDeviceList } from '../api/devices.js'
 
 const messages = ref([
-  { role: 'assistant', text: '你好！我是智慧路灯节能系统的 AI 助手。基于 MaxKB 知识库，我可以帮助你解答路灯故障排查，也可以帮你动态调整系统阈值（例如："把阈值调到30"）。请问有什么可以帮您？' },
+  { role: 'assistant', text: '你好！我是智慧路灯节能系统的 AI 助手。基于 MaxKB 知识库，我可以帮助你解答路灯故障排查和系统配置问题。请问有什么可以帮您？' },
 ])
 const input = ref('')
 const loading = ref(false)
 
-const suggestions = ['把阈值调到30', '亮度调到60%', '灯不亮怎么办', '如何优化节能策略？']
+const suggestions = ['灯不亮怎么办', '如何优化节能策略？', '设备离线怎么排查']
 const deviceList = ref([])
 const selectedDevice = ref('')
 
@@ -58,6 +58,36 @@ function formatParam(key, val) {
   if (['tempLt','temp_lt'].includes(key)) return val + '℃'
   if (key === 'brightness') return val + '%'
   return val
+}
+
+function renderMd(text) {
+  if (!text) return ''
+  // 先转义 HTML 防止 XSS，再还原我们主动生成的标签
+  let html = text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  // 粗体
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+  // 斜体
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>')
+  // 块引用
+  html = html.replace(/^&gt; (.*)$/gm, '<blockquote>$1</blockquote>')
+  // 标题
+  html = html.replace(/^### (.+)$/gm, '<h4>$1</h4>')
+  html = html.replace(/^## (.+)$/gm, '<h3>$1</h3>')
+  // 水平线
+  html = html.replace(/^---$/gm, '<hr>')
+  // 无序列表
+  html = html.replace(/^- (.+)$/gm, '<li>$1</li>')
+  // 有序列表
+  html = html.replace(/^\d+\.\s+(.+)$/gm, '<li>$1</li>')
+  // 合并相邻 <li> 为 <ul>
+  html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>')
+  // 合并相邻 <blockquote>
+  html = html.replace(/((?:<blockquote>.*<\/blockquote>\n?)+)/g, '<div class="md-quote-group">$1</div>')
+  // 换行
+  html = html.replace(/\n\n/g, '<br><br>')
+  html = html.replace(/\n/g, '<br>')
+  return html
 }
 
 async function sendMessage(text) {
@@ -116,8 +146,8 @@ async function sendMessage(text) {
               <svg v-if="msg.role==='assistant'" viewBox="0 0 24 24" fill="none"><rect x="4" y="8" width="16" height="12" rx="2" fill="currentColor" opacity="0.6" stroke="currentColor" stroke-width="1.5"/><circle cx="9" cy="13" r="1.5" fill="currentColor"/><circle cx="15" cy="13" r="1.5" fill="currentColor"/></svg>
               <svg v-else viewBox="0 0 24 24" fill="none"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
             </div>
-            <div class="msg-bubble" style="white-space: pre-line">
-              {{ msg.text }}
+            <div class="msg-bubble">
+              <div v-html="renderMd(msg.text)"></div>
               <div v-if="msg.action" class="action-card">
                 <div class="ac-title">
                   <svg viewBox="0 0 24 24" fill="none" width="14" height="14"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -362,6 +392,21 @@ async function sendMessage(text) {
   line-height: 1.65;
   box-shadow: 0 10px 24px rgba(14, 70, 120, 0.08);
 }
+.msg-bubble :deep(strong) { color: #0d1b2d; font-weight: 900; }
+.msg-bubble :deep(em) { color: #40566f; }
+.msg-bubble :deep(h3) { margin: 4px 0 8px; font-size: 15px; font-weight: 900; color: #0d1b2d; }
+.msg-bubble :deep(h4) { margin: 4px 0 6px; font-size: 13px; font-weight: 900; color: #0d1b2d; }
+.msg-bubble :deep(ul) { margin: 6px 0; padding-left: 18px; }
+.msg-bubble :deep(li) { margin-bottom: 2px; line-height: 1.6; }
+.msg-bubble :deep(blockquote) {
+  margin: 8px 0; padding: 6px 12px;
+  border-left: 3px solid #008de6;
+  background: rgba(0, 141, 230, 0.06);
+  border-radius: 0 6px 6px 0;
+  color: #40566f; font-style: italic;
+}
+.msg-bubble :deep(hr) { margin: 10px 0; border: none; border-top: 1px solid rgba(0,141,230,0.14); }
+.msg-bubble :deep(.md-quote-group) { margin: 6px 0; }
 .message.assistant .msg-bubble {
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(235, 248, 255, 0.94));

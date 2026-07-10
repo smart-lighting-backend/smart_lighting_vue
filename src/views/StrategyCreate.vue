@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchStrategyGroups, createStrategy, fetchStrategyDetail, updateStrategy, testStrategy } from '../api/strategy.js'
 import { ElMessage } from 'element-plus'
@@ -13,25 +13,32 @@ const isEdit = ref(false)
 const testVisible = ref(false)
 const testLoading = ref(false)
 const testResult = ref(null)
+const hasAnyHit = computed(() => testResult.value?.allResults?.some(r => r.hit) || testResult.value?.matched)
 const testInput = reactive({
   illuminance: 20, temperature: 26, humidity: 60,
   pir: 0, trafficFlow: 5, currentTime: '23:00'
 })
 
 function buildCurrentConditions() {
-  const obj = { group: form.group, startTime: form.startTime, endTime: form.endTime }
+  const obj = { group: form.group, time_range: `${form.startTime}-${form.endTime}` }
   conditionItems.value.filter(c => c.enabled).forEach(c => {
     obj[c.key] = c.isBoolean ? 1 : c.value
   })
   obj.extraActions = {
     voiceAlert: form.actions.voiceAlert,
+    voiceContent: form.actions.voiceContent || undefined,
+    capturePhoto: form.actions.capturePhoto,
     nightVision: form.actions.nightVision,
     generateAlert: form.actions.generateAlert,
+    alertType: form.actions.alertType,
+    alertLevel: form.actions.alertLevel,
+    alertContent: form.actions.alertContent || undefined,
   }
   return JSON.stringify(obj)
 }
 
 function buildCurrentAction() {
+  if (!form.actions.controlEnabled) return 'NOTIFY'
   if (form.actions.brightness === 0) return 'OFF'
   if (form.actions.brightness === 100) return 'ON'
   return 'DIMMING(' + form.actions.brightness + ')'
@@ -62,6 +69,7 @@ const showAddMenu = ref(false)
 
 // 可添加的条件类型（key 必须与 DecisionEngine evaluateSingle 匹配）
 const AVAILABLE_CONDITIONS = [
+  { key: 'lux_lt',     label: '光照强度低于',   desc: '当光照传感器读数低于阈值时触发',     value: 50,  unit: 'Lux' },
   { key: 'lux_gt',     label: '光照强度高于',   desc: '当光照传感器读数超过阈值时触发',     value: 200, unit: 'Lux' },
   { key: 'temp_lt',    label: '温度低于',       desc: '当温度读数低于阈值时触发',           value: 5,   unit: '°C' },
   { key: 'temp_gt',    label: '温度高于',       desc: '当温度读数超过阈值时触发',           value: 35,  unit: '°C' },
@@ -86,10 +94,16 @@ const form = reactive({
   startTime: '23:00',
   endTime: '05:00',
   actions: {
+    controlEnabled: true,
     brightness: 30,
     voiceAlert: false,
-    nightVision: true,
+    voiceContent: '',
+    capturePhoto: false,
+    nightVision: false,
     generateAlert: false,
+    alertType: 'POLICY_ALERT',
+    alertLevel: 'WARNING',
+    alertContent: '',
   },
 })
 
@@ -141,17 +155,31 @@ onMounted(async () => {
         try {
           const cond = JSON.parse(data.conditions)
           if (cond.group) form.group = cond.group
-          if (cond.startTime) form.startTime = cond.startTime
-          if (cond.endTime) form.endTime = cond.endTime
+          // 兼容 time_range（新格式）和 startTime/endTime（旧格式）
+          if (cond.time_range && typeof cond.time_range === 'string') {
+            const parts = cond.time_range.split('-')
+            if (parts.length === 2) {
+              form.startTime = parts[0]
+              form.endTime = parts[1]
+            }
+          } else {
+            if (cond.startTime) form.startTime = cond.startTime
+            if (cond.endTime) form.endTime = cond.endTime
+          }
           if (cond.extraActions) {
             form.actions.voiceAlert = !!cond.extraActions.voiceAlert
+            form.actions.voiceContent = cond.extraActions.voiceContent || ''
+            form.actions.capturePhoto = !!cond.extraActions.capturePhoto
             form.actions.nightVision = !!cond.extraActions.nightVision
             form.actions.generateAlert = !!cond.extraActions.generateAlert
+            if (cond.extraActions.alertType) form.actions.alertType = cond.extraActions.alertType
+            if (cond.extraActions.alertLevel) form.actions.alertLevel = cond.extraActions.alertLevel
+            form.actions.alertContent = cond.extraActions.alertContent || ''
           }
 
           // 解析条件：兼容新格式 (lux_lt: 30) 和旧嵌套格式 (illuminance: {enabled, threshold})
           const items = []
-          const metaKeys = ['group', 'startTime', 'endTime', 'extraActions']
+          const metaKeys = ['group', 'startTime', 'endTime', 'time_range', 'extraActions']
           for (const [key, val] of Object.entries(cond)) {
             if (metaKeys.includes(key)) continue
             if (typeof val === 'number' || typeof val === 'string') {
@@ -175,7 +203,9 @@ onMounted(async () => {
         } catch(e) {}
       }
 
-      if (data.action === 'ON') {
+      if (data.action === 'NOTIFY') {
+        form.actions.controlEnabled = false
+      } else if (data.action === 'ON') {
         form.actions.brightness = 100
       } else if (data.action === 'OFF') {
         form.actions.brightness = 0
@@ -191,23 +221,34 @@ async function saveStrategy() {
   if (!form.name.trim()) return alert('请输入策略名称')
   saving.value = true
 
-  let actionStr = 'DIMMING(' + form.actions.brightness + ')'
-  if (form.actions.brightness === 0) actionStr = 'OFF'
-  else if (form.actions.brightness === 100) actionStr = 'ON'
+  let actionStr
+  if (!form.actions.controlEnabled) {
+    actionStr = 'NOTIFY'
+  } else if (form.actions.brightness === 0) {
+    actionStr = 'OFF'
+  } else if (form.actions.brightness === 100) {
+    actionStr = 'ON'
+  } else {
+    actionStr = 'DIMMING(' + form.actions.brightness + ')'
+  }
 
   // 构建引擎兼容的扁平条件 JSON
   const conditionsObj = {
     group: form.group,
-    startTime: form.startTime,
-    endTime: form.endTime,
+    time_range: `${form.startTime}-${form.endTime}`,
   }
   conditionItems.value.filter(c => c.enabled).forEach(c => {
     conditionsObj[c.key] = c.isBoolean ? 1 : c.value
   })
   conditionsObj.extraActions = {
     voiceAlert: form.actions.voiceAlert,
+    voiceContent: form.actions.voiceContent || undefined,
+    capturePhoto: form.actions.capturePhoto,
     nightVision: form.actions.nightVision,
     generateAlert: form.actions.generateAlert,
+    alertType: form.actions.alertType,
+    alertLevel: form.actions.alertLevel,
+    alertContent: form.actions.alertContent || undefined,
   }
 
   const payload = {
@@ -341,6 +382,12 @@ async function saveStrategy() {
         </div>
         <div class="action-body">
           <div class="action-left">
+            <label class="action-check-item" style="margin-bottom:12px">
+              <input type="checkbox" v-model="form.actions.controlEnabled" class="real-checkbox" />
+              <span class="checkbox-custom"></span>
+              下发照明控制指令
+            </label>
+            <template v-if="form.actions.controlEnabled">
             <div class="action-label-row">
               <span>目标亮度调节</span>
               <span class="brightness-pct">{{ form.actions.brightness }}%</span>
@@ -356,29 +403,63 @@ async function saveStrategy() {
               <span>50%</span>
               <span>100%（全亮）</span>
             </div>
+            </template>
           </div>
 
           <div class="action-right">
             <div class="action-sub-title">附加联动动作</div>
             <div class="action-checks">
+              <!-- 语音播报 -->
               <label class="action-check-item">
                 <input type="checkbox" v-model="form.actions.voiceAlert" class="real-checkbox" />
                 <span class="checkbox-custom"></span>
                 <svg class="ac-icon" viewBox="0 0 24 24" fill="none"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" stroke="currentColor" stroke-width="1.5"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-                开启语音播报提示（针对违规停车）
+                开启语音播报提示
               </label>
+              <div v-if="form.actions.voiceAlert" class="action-sub-field">
+                <input v-model="form.actions.voiceContent" class="field-input" placeholder="自定义播报内容（留空使用默认文案）" />
+              </div>
+
+              <!-- 自动拍照 -->
+              <label class="action-check-item">
+                <input type="checkbox" v-model="form.actions.capturePhoto" class="real-checkbox" />
+                <span class="checkbox-custom"></span>
+                <svg class="ac-icon" viewBox="0 0 24 24" fill="none"><rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.5"/></svg>
+                自动抓拍照片（策略触发时联动拍照）
+              </label>
+
+              <!-- 夜视红外 -->
               <label class="action-check-item">
                 <input type="checkbox" v-model="form.actions.nightVision" class="real-checkbox" />
                 <span class="checkbox-custom"></span>
-                <svg class="ac-icon" viewBox="0 0 24 24" fill="none"><rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.5"/></svg>
+                <svg class="ac-icon" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 20h20L12 2z" stroke="currentColor" stroke-width="1.5"/><path d="M12 9v5M12 17v.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
                 切换监控摄像头至夜视红外模式
               </label>
+
+              <!-- 自定义告警 -->
               <label class="action-check-item">
                 <input type="checkbox" v-model="form.actions.generateAlert" class="real-checkbox" />
                 <span class="checkbox-custom"></span>
                 <svg class="ac-icon" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 20h20L12 2z" stroke="currentColor" stroke-width="1.5"/><path d="M12 9v5M12 17v.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-                产生异常告警记录
+                产生自定义告警记录
               </label>
+              <div v-if="form.actions.generateAlert" class="action-sub-fields">
+                <div class="alert-config-row">
+                  <select v-model="form.actions.alertType" class="field-select" style="width:auto">
+                    <option value="POLICY_ALERT">策略联动</option>
+                    <option value="FAULT">故障</option>
+                    <option value="OFFLINE">离线</option>
+                    <option value="HEALTH_LOW">健康分过低</option>
+                  </select>
+                  <select v-model="form.actions.alertLevel" class="field-select" style="width:auto">
+                    <option value="INFO">提示</option>
+                    <option value="WARNING">警告</option>
+                    <option value="MAJOR">严重</option>
+                    <option value="CRITICAL">紧急</option>
+                  </select>
+                </div>
+                <input v-model="form.actions.alertContent" class="field-input" placeholder="自定义告警内容（留空使用默认文案）" />
+              </div>
             </div>
           </div>
         </div>
@@ -393,13 +474,14 @@ async function saveStrategy() {
         <div class="test-field"><label>湿度 (%)</label><input v-model.number="testInput.humidity" type="number" class="field-input" /></div>
         <div class="test-field"><label>人体红外 (0/1)</label><input v-model.number="testInput.pir" type="number" min="0" max="1" class="field-input" /></div>
         <div class="test-field"><label>车流量 (/min)</label><input v-model.number="testInput.trafficFlow" type="number" class="field-input" /></div>
+        <div class="test-field"><label>模拟时间</label><input v-model="testInput.currentTime" type="time" class="field-input" /></div>
         <button class="search-btn" @click="runTest" :disabled="testLoading">{{ testLoading ? '测试中...' : '开始测试' }}</button>
       </div>
       <div v-if="testResult" class="test-result">
         <div v-if="testResult.matched" class="test-match">
           匹配成功！命中策略 <strong>{{ testResult.matchedPolicy }}</strong>，执行 {{ testResult.matchedAction }}
         </div>
-        <div v-else class="test-nomatch">未匹配任何策略 — 当前条件不满足任何已启用策略</div>
+        <div v-else-if="!hasAnyHit" class="test-nomatch">未匹配任何策略 — 当前条件不满足任何已启用策略</div>
         <div v-if="testResult.allResults?.length" class="test-all">
           <div v-for="r in testResult.allResults" :key="r.policyId" class="test-policy-row" :class="{ hit: r.hit }">
             <span>{{ r.hit ? '' : '' }} {{ r.policyName }}</span>
@@ -709,7 +791,7 @@ async function saveStrategy() {
 
 .form-section {
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   margin-bottom: 0;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 252, 255, 0.95)) !important;
   border: 1px solid rgba(0, 141, 230, 0.16) !important;
@@ -1023,6 +1105,25 @@ async function saveStrategy() {
 .ac-icon {
   color: #006fc2 !important;
 }
+
+/* 附加联动子字段 */
+.action-sub-field { margin-top: 2px; padding-left: 28px; }
+.action-sub-field .field-input {
+  width: 100%; padding: 6px 10px; border: 1px solid rgba(0,141,230,0.2); border-radius: 6px;
+  font-size: 12px; color: #1d3148; background: #fff; outline: none;
+}
+.action-sub-field .field-input:focus { border-color: rgba(0,141,230,0.4); }
+.action-sub-fields { margin-top: 4px; padding-left: 28px; display: flex; flex-direction: column; gap: 6px; }
+.alert-config-row { display: flex; gap: 8px; }
+.alert-config-row .field-select {
+  padding: 4px 8px; border: 1px solid rgba(0,141,230,0.2); border-radius: 6px;
+  font-size: 12px; color: #1d3148; background: #fff; outline: none; cursor: pointer;
+}
+.action-sub-fields .field-input {
+  width: 100%; padding: 6px 10px; border: 1px solid rgba(0,141,230,0.2); border-radius: 6px;
+  font-size: 12px; color: #1d3148; background: #fff; outline: none;
+}
+.action-sub-fields .field-input:focus { border-color: rgba(0,141,230,0.4); }
 
 .test-mode-btn {
   color: #006fc2 !important;

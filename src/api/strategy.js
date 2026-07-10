@@ -154,6 +154,14 @@ function evalCondition(key, value, sensor) {
     case 'pir': return sensor.pir != null && sensor.pir === Number(value)
     case 'traffic_gt': return sensor.trafficFlow != null && sensor.trafficFlow > Number(value)
     case 'traffic_lt': return sensor.trafficFlow != null && sensor.trafficFlow < Number(value)
+    case 'time_range': {
+      if (!sensor._currentTime) return true // 无模拟时间时不评估
+      const [start, end] = String(value).split('-')
+      if (!start || !end) return false
+      const t = sensor._currentTime
+      if (start <= end) return t >= start && t <= end
+      return t >= start || t <= end // 跨夜时段
+    }
     default: return true // 跳过 group/startTime/extraActions 等元数据
   }
 }
@@ -179,6 +187,7 @@ export function testStrategy(data) {
         humidity: data.humidity,
         pir: data.pir,
         trafficFlow: data.trafficFlow,
+        _currentTime: data.currentTime || null,
       }
       // 评估当前编辑的策略
       const matched = localMatches(data.conditions, sensor)
@@ -186,7 +195,10 @@ export function testStrategy(data) {
         matched,
         matchedPolicy: matched ? (data.name || '(当前编辑策略)') : null,
         matchedAction: matched ? data.action : null,
-        allResults: MOCK_POLICIES.map(p => ({ policyId: p.id, policyName: p.name, hit: false, priority: 100 })),
+        allResults: MOCK_POLICIES.map(p => {
+          const hit = p.conditions ? localMatches(p.conditions, sensor) : false
+          return { policyId: p.id, policyName: p.name, hit, priority: 100 }
+        }),
       }
       return result
     })(),
