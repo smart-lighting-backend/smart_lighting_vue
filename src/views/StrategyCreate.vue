@@ -20,7 +20,10 @@ const testInput = reactive({
 })
 
 function buildCurrentConditions() {
-  const obj = { group: form.group, time_range: `${form.startTime}-${form.endTime}` }
+  const obj = { group: form.group }
+  if (form.startTime && form.endTime) {
+    obj.time_range = `${form.startTime}-${form.endTime}`
+  }
   conditionItems.value.filter(c => c.enabled).forEach(c => {
     obj[c.key] = c.isBoolean ? 1 : c.value
   })
@@ -91,8 +94,8 @@ function mapOldCondition(key, val) {
 const form = reactive({
   name: '',
   group: '',
-  startTime: '23:00',
-  endTime: '05:00',
+  startTime: '',
+  endTime: '',
   actions: {
     controlEnabled: true,
     brightness: 30,
@@ -233,9 +236,9 @@ async function saveStrategy() {
   }
 
   // 构建引擎兼容的扁平条件 JSON
-  const conditionsObj = {
-    group: form.group,
-    time_range: `${form.startTime}-${form.endTime}`,
+  const conditionsObj = { group: form.group }
+  if (form.startTime && form.endTime) {
+    conditionsObj.time_range = `${form.startTime}-${form.endTime}`
   }
   conditionItems.value.filter(c => c.enabled).forEach(c => {
     conditionsObj[c.key] = c.isBoolean ? 1 : c.value
@@ -256,7 +259,7 @@ async function saveStrategy() {
     policyType: 'SCENE',
     conditions: JSON.stringify(conditionsObj),
     action: actionStr,
-    effectiveTime: `${form.startTime}-${form.endTime}`,
+    effectiveTime: (form.startTime && form.endTime) ? `${form.startTime}-${form.endTime}` : '全天',
   }
 
   try {

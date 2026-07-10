@@ -82,7 +82,12 @@ function formatBackendTime(time) {
 }
 
 function adaptBackendHistory(cmd) {
-  const command = REVERSE_ACTION_MAP[cmd.action] || (cmd.action ? cmd.action.toLowerCase() : 'unknown')
+  let command
+  if (cmd.action && cmd.action.startsWith('DIMMING')) {
+    command = 'dim'
+  } else {
+    command = REVERSE_ACTION_MAP[cmd.action] || (cmd.action ? cmd.action.toLowerCase() : 'unknown')
+  }
   return {
     id: `CTL${pad3(cmd.id)}`,
     device_id: cmd.deviceId,

@@ -55,7 +55,7 @@ const controlLoading = ref(false);
 const controlHistory = ref([]);
 const lightStatus = ref(false); // true=开灯, false=关灯
 const healthDetail = ref(null); // 健康评分详情
-const brightness = ref(80);
+const brightness = ref(0);
 const controlPagination = ref({ page: 1, pageSize: 5 });
 const controlTotal = ref(0);
 const timeRangeOptions = [
@@ -134,7 +134,11 @@ const formatDateOnly = (dateRaw) => {
   }
 };
 const goBack = () => {
-  router.push('/devices');
+  if (route.query.from === 'dashboard') {
+    router.push('/dashboard')
+  } else {
+    router.push('/devices')
+  }
 };
 const STATUS_NUM_MAP = { 0: 'disabled', 1: 'online', 2: 'offline', 3: 'abnormal' }
 
@@ -164,8 +168,13 @@ const mapDeviceInfo = (raw) => {
 function applyResolvedControlState(state) {
   if (!state) return
   lightStatus.value = state.power
-  brightness.value = state.brightness
+  brightness.value = state.power ? state.brightness : 0
 }
+
+// 关灯时亮度强制归零，开灯时恢复默认
+watch(lightStatus, (on) => {
+  if (!on) brightness.value = 0
+})
 
 async function fetchLatestControlRecord() {
   try {
@@ -1033,6 +1042,8 @@ onBeforeUnmount(() => {
                 :max="100"
                 :marks="dimMarks"
                 class="dim-slider-el"
+                :class="{ 'is-off': !lightStatus }"
+                :disabled="!lightStatus"
                 @change="handleControlCommand('dim')"
               />
             </div>

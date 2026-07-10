@@ -62,13 +62,13 @@ async function loadData() {
           try {
             const cond = JSON.parse(item.conditions)
             if (cond.group) group = cond.group
-            // 优先 time_range，其次 startTime/endTime
-            if (cond.time_range) {
+            // 优先 time_range，其次 startTime/endTime（空值表示全天）
+            if (cond.time_range && cond.time_range !== '-') {
               const parts = cond.time_range.split('-')
               if (parts.length === 2) { startTime = parts[0]; endTime = parts[1] }
             } else {
-              if (cond.startTime) startTime = cond.startTime
-              if (cond.endTime) endTime = cond.endTime
+              if (cond.startTime && cond.startTime !== '') startTime = cond.startTime
+              if (cond.endTime && cond.endTime !== '') endTime = cond.endTime
             }
           } catch (e) {}
         }
