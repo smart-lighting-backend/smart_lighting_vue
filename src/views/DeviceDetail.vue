@@ -28,6 +28,26 @@ const tempHumidityChartRef = ref(null);
 let chartInstance = null;
 let tempHumidityChartInstance = null;
 let resizeTimer = null;
+
+// 设备详情 + 遥测 + 健康评分 每 30 秒自动刷新
+useAutoRefresh(async () => {
+  if (!deviceId.value) return
+  try {
+    const [res1, res2] = await Promise.all([
+      fetchDeviceDetail(deviceId.value),
+      fetchLatestTelemetry(deviceId.value),
+    ])
+    if (res1.code === 200) {
+      deviceInfo.value = mapDeviceInfo(res1.data)
+      await applyDeviceControlState(deviceInfo.value)
+    }
+    if (res2.code === 200) {
+      latestTelemetry.value = res2.data
+    }
+    const hRes = await fetchDeviceHealth(deviceId.value)
+    if (hRes?.data) healthDetail.value = hRes.data
+  } catch {}
+}, { interval: 30000 })
 const MANUAL_CONTROL_STATE_EVENT = 'manual-control-state-change';
 
 
@@ -662,7 +682,7 @@ onMounted(async () => {
  })
  window.addEventListener(MANUAL_CONTROL_STATE_EVENT, handleManualControlStateChange);
  await loadDeviceInfo();
- loadHealth();
+ await loadHealth();
  loadLatestTelemetry();
  loadHistoryData();
  loadControlHistory();
@@ -670,22 +690,6 @@ onMounted(async () => {
  initChart();
  window.addEventListener('resize', handleResize);
  }, 100);
- // 实时遥测 + 设备状态 每 12 秒自动刷新（静默，不触发 loading 遮罩）
- useAutoRefresh(async () => {
-   try {
-     const [res1, res2] = await Promise.all([
-       fetchDeviceDetail(deviceId.value),
-       fetchLatestTelemetry(deviceId.value),
-     ])
-     if (res1.code === 200) {
-       deviceInfo.value = mapDeviceInfo(res1.data)
-       await applyDeviceControlState(deviceInfo.value)
-     }
-     if (res2.code === 200) {
-       latestTelemetry.value = res2.data
-     }
-   } catch {}
- }, { interval: 300000 })
 });
 
 // 路由参数变化时（如 /devices/SL_001 → /devices/SL_002）重新加载
@@ -693,7 +697,7 @@ watch(() => route.params.id, async (newId) => {
   if (newId && newId !== deviceId.value) {
     deviceId.value = newId;
     await loadDeviceInfo();
-    loadHealth();
+    await loadHealth();
     loadLatestTelemetry();
     loadHistoryData();
     loadControlHistory();
@@ -764,38 +768,8 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="dev-info-body">
-          <div class="dev-info-left">
-            <div class="health-ring-wrap">
-              <svg class="health-ring" viewBox="0 0 120 120">
-                <circle cx="60" cy="60" r="50" fill="none" stroke="rgba(0,141,230,0.16)" stroke-width="8"/>
-                <circle cx="60" cy="60" r="50" fill="none" :stroke="healthScoreColor" stroke-width="8"
-                  stroke-linecap="round" transform="rotate(-90, 60, 60)"
-                  :stroke-dasharray="314.16"
-                  :stroke-dashoffset="314.16 * (1 - (deviceInfo?.healthScore || 0) / 100)" />
-              </svg>
-              <div class="health-ring-text">
-                <span class="health-num">{{ deviceInfo?.healthScore || '--' }}</span>
-                <span class="health-lbl">健康分</span>
-              </div>
-            </div>
-            <div class="dev-short-meta">
-              <div class="short-item">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="3" y="3" width="18" height="18" rx="2"/>
-                </svg>
-                <span>#{{ deviceInfo?.id || '--' }}</span>
-              </div>
-              <div class="short-item">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
-                  <circle cx="12" cy="10" r="3"/>
-                </svg>
-                <span>{{ deviceInfo?.region || '--' }}</span>
-              </div>
-            </div>
-          </div>
 
-          <div class="dev-info-right">
+          <div class="dev-info-right" style="flex: 1;">
             <div class="info-grid">
               <div class="info-cell">
                 <span class="info-label">固件版本</span>

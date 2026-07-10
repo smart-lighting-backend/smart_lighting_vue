@@ -77,8 +77,8 @@ export function validateDeviceRow(row, existingDeviceIds = new Set()) {
     errors.push('设备编号不能为空')
   } else if (row.deviceId.length > 50) {
     errors.push('设备编号不能超过50个字符')
-  } else if (!/^[a-zA-Z0-9_]+$/.test(row.deviceId)) {
-    errors.push('设备编号只能包含字母、数字和下划线')
+  } else if (!/^[a-zA-Z0-9][a-zA-Z0-9_]*$/.test(row.deviceId)) {
+    errors.push('设备编号只能包含字母、数字和下划线，且不能以下划线开头')
   } else if (existingDeviceIds.has(row.deviceId)) {
     errors.push(`设备编号 "${row.deviceId}" 已存在`)
   }
@@ -107,19 +107,35 @@ export function validateDeviceRow(row, existingDeviceIds = new Set()) {
   return { valid: errors.length === 0, errors }
 }
 
-export function validateAllRows(rows, existingDeviceIds = new Set()) {
+export function validateAllRows(rows, existingDeviceIds = new Set(), existingLocations = new Set()) {
   const existingSet = new Set(existingDeviceIds)
-  const seenRows = new Map()
+  const seenDeviceIds = new Map()
+  const seenLocations = new Map()
 
   return rows.map((row, index) => {
     const result = validateDeviceRow(row, existingSet)
     const deviceId = row.deviceId
+    const rowNum = row._row || index + 2
 
     if (deviceId) {
-      if (seenRows.has(deviceId)) {
-        result.errors.unshift(`设备编号 "${deviceId}" 与第 ${seenRows.get(deviceId)} 行重复`)
+      if (seenDeviceIds.has(deviceId)) {
+        result.errors.unshift(`设备编号 "${deviceId}" 与第 ${seenDeviceIds.get(deviceId)} 行重复`)
       } else {
-        seenRows.set(deviceId, row._row || index + 2)
+        seenDeviceIds.set(deviceId, rowNum)
+      }
+    }
+
+    // 坐标重合检测
+    const lng = row.longitude
+    const lat = row.latitude
+    if (lng && lat) {
+      const locKey = `${lng},${lat}`
+      if (existingLocations.has(locKey)) {
+        result.errors.unshift(`坐标 (${locKey}) 与已有设备重合`)
+      } else if (seenLocations.has(locKey)) {
+        result.errors.unshift(`坐标 (${locKey}) 与第 ${seenLocations.get(locKey)} 行重复`)
+      } else {
+        seenLocations.set(locKey, rowNum)
       }
     }
 

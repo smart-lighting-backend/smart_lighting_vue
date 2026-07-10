@@ -56,6 +56,21 @@ async function applyDeviceState(node) {
   applyResolvedState(state)
 }
 
+// 设备状态每 20 秒自动同步
+useAutoRefresh(async () => {
+  if (!nodes.value.length) return
+  const r = await fetchDeviceNodes()
+  const list = Array.isArray(r) ? r : (r.data || [])
+  nodes.value = list
+  if (selectedNode.value) {
+    const updated = list.find(n => nodeDeviceId(n) === currentDeviceId())
+    if (updated) {
+      selectedNode.value = updated
+      await applyDeviceState(updated)
+    }
+  }
+}, { interval: 20000, isSensitive: () => sending.value })
+
 onMounted(async () => {
   const res = await fetchDeviceNodes()
   const raw = Array.isArray(res) ? res : (res.data || [])
@@ -64,19 +79,6 @@ onMounted(async () => {
     selectedNode.value = nodes.value[0]
     await applyDeviceState(nodes.value[0])
   }
-  // 设备状态每 20 秒自动同步
-  useAutoRefresh(async () => {
-    const r = await fetchDeviceNodes()
-    const list = Array.isArray(r) ? r : (r.data || [])
-    nodes.value = list
-    if (selectedNode.value) {
-      const updated = list.find(n => nodeDeviceId(n) === currentDeviceId())
-      if (updated) {
-        selectedNode.value = updated
-        await applyDeviceState(updated)
-      }
-    }
-  }, { interval: 20000, isSensitive: () => sending.value })
 })
 
 watch(selectedNode, (node) => {

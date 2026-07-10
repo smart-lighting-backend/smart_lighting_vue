@@ -16,6 +16,21 @@ const showManual = ref(false)
 const showUserMenu = ref(false)
 const alarmCount = ref(0)
 
+// ═══ 沉浸模式（侧边栏 + 顶栏收起） ═══
+const sidebarCollapsed = ref(false)
+const headerCollapsed = ref(false)
+const isImmersive = computed(() => sidebarCollapsed.value && headerCollapsed.value)
+function toggleImmersive() {
+  if (isImmersive.value) {
+    sidebarCollapsed.value = false
+    headerCollapsed.value = false
+  } else {
+    sidebarCollapsed.value = true
+    headerCollapsed.value = true
+  }
+}
+provide('immersiveMode', { isImmersive, toggleImmersive })
+
 // ═══ 动态导航菜单（遵循文档：登录后使用API返回的menus，刷新时请求/me）═══════════════════════════
 const menus = ref([])
 const loadingMenus = ref(true)
@@ -229,8 +244,8 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="main-layout">
-    <aside class="sidebar">
+  <div class="main-layout" :class="{ immersive: isImmersive }">
+    <aside class="sidebar" :class="{ collapsed: sidebarCollapsed }">
       <div class="sidebar-brand">
         <div class="brand-logo">
           <svg viewBox="0 0 24 24" fill="none"><path d="M12 2C8.13 2 5 5.13 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.87-3.13-7-7-7z" fill="currentColor"/><path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1z" fill="currentColor" opacity="0.7"/></svg>
@@ -314,7 +329,7 @@ onMounted(async () => {
     </aside>
 
     <div class="main-body">
-      <header class="top-bar">
+      <header class="top-bar" :class="{ collapsed: headerCollapsed }">
         <div class="top-bar-left">
           <span class="top-brand">智慧路灯节能系统</span>
           <nav class="top-nav">
@@ -551,6 +566,7 @@ onMounted(async () => {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  background: #060e1f;
 }
 
 .top-bar {
@@ -641,6 +657,38 @@ onMounted(async () => {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+  background: #060e1f;
+}
+
+/* ── 沉浸模式：侧边栏 + 顶栏收起 ── */
+.sidebar {
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              min-width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              border-width 0.35s;
+}
+.sidebar.collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  padding: 0;
+  overflow: hidden;
+  border-width: 0;
+}
+
+.top-bar {
+  transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              min-height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              padding 0.35s, border-width 0.35s, opacity 0.35s;
+}
+.top-bar.collapsed {
+  height: 0 !important;
+  min-height: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  overflow: hidden;
+  border-bottom-width: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 </style>
 

@@ -110,8 +110,29 @@ async function handleDownloadTemplate() {
   }
 }
 
+function buildExistingLocationSet() {
+  const locs = new Set()
+  ;(props.existingDevices || []).forEach(d => {
+    if (d.location) {
+      const parts = d.location.split(',')
+      if (parts.length === 2) {
+        const lng = roundCoordStr(parts[0])
+        const lat = roundCoordStr(parts[1])
+        if (lng && lat) locs.add(`${lng},${lat}`)
+      }
+    }
+  })
+  return locs
+}
+
+function roundCoordStr(val) {
+  const num = parseFloat(val)
+  if (Number.isNaN(num)) return ''
+  return String(Math.round(num * 1e6) / 1e6)
+}
+
 function revalidateAll() {
-  validationResults.value = validateAllRows(parsedRows.value, new Set(props.existingDeviceIds))
+  validationResults.value = validateAllRows(parsedRows.value, new Set(props.existingDeviceIds), buildExistingLocationSet())
 }
 
 // rowIndex currently unused — editing any cell requires full revalidation for duplicate detection

@@ -86,10 +86,13 @@ function makeCoordRule(field) {
   ]
 }
 
-const DEVICE_ID_PATTERN = /^[a-zA-Z0-9_]+$/
+const DEVICE_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_]*$/
 
 const createRules = {
-  deviceId: [{ required: true, message: '请输入设备编号', trigger: 'blur' }],
+  deviceId: [
+    { required: true, message: '请输入设备编号', trigger: 'blur' },
+    { pattern: DEVICE_ID_PATTERN, message: '设备编号只能包含字母、数字和下划线，且不能以下划线开头', trigger: 'blur' },
+  ],
   status: [{ required: true, message: '请选择设备状态', trigger: 'change' }],
   longitude: makeCoordRule('经度'),
   latitude: makeCoordRule('纬度'),
@@ -138,6 +141,19 @@ async function loadDevices() {
   }
 }
 
+// 设备列表每 5 分钟自动刷新，敏感操作时跳过
+useAutoRefresh(async () => {
+  try {
+    const statusVal = STATUS_QUERY_MAP[statusFilter.value]
+    const res = await fetchDeviceList({ status: statusVal, pageSize: 10000 })
+    const raw = Array.isArray(res) ? res : (res.data || [])
+    devices.value = raw
+  } catch {}
+}, {
+  interval: 300000,
+  isSensitive: () => createDialogVisible.value || deletingDeviceId.value || togglingDeviceId.value || areaBindingDialogVisible.value || areaUnbindingDeviceId.value || batchOperating.value,
+})
+
 onMounted(() => {
   loadDevices()
   const { subscribe } = useMqtt()
@@ -147,18 +163,6 @@ onMounted(() => {
       const raw = Array.isArray(res) ? res : (res.data || [])
       devices.value = raw
     }).catch(() => {})
-  })
-  useAutoRefresh(async () => {
-    // 静默刷新，不触发表格 loading 遮罩
-    try {
-      const statusVal = STATUS_QUERY_MAP[statusFilter.value]
-      const res = await fetchDeviceList({ status: statusVal, pageSize: 10000 })
-      const raw = Array.isArray(res) ? res : (res.data || [])
-      devices.value = raw
-    } catch {}
-  }, {
-    interval: 300000,
-    isSensitive: () => createDialogVisible.value || deletingDeviceId.value || togglingDeviceId.value || areaBindingDialogVisible.value || areaUnbindingDeviceId.value || batchOperating.value,
   })
 })
 
@@ -305,7 +309,7 @@ function onDeviceIdBlur() {
   const code = createForm.value.deviceId?.trim()
   if (code && !DEVICE_ID_PATTERN.test(code) && code !== _lastWarnedCode) {
     _lastWarnedCode = code
-    ElMessage.warning('设备编号只能包含字母、数字和下划线')
+    ElMessage.warning('设备编号只能包含字母、数字和下划线，且不能以下划线开头')
   }
 }
 
@@ -315,7 +319,7 @@ async function submitCreateDevice() {
   // 设备编号格式校验
   const code = createForm.value.deviceId?.trim()
   if (code && !DEVICE_ID_PATTERN.test(code)) {
-    ElMessage.warning('设备编号只能包含字母、数字和下划线')
+    ElMessage.warning('设备编号只能包含字母、数字和下划线，且不能以下划线开头')
     return
   }
 
