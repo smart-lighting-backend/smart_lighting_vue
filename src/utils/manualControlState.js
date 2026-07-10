@@ -67,10 +67,11 @@ export function stateFromControlHistoryRecord(record, fallbackBrightness = 75) {
 }
 
 export function resolveManualControlState(node, latestHistoryRecord, fallbackBrightness = 75, now = new Date()) {
-  // Manual locks reflect the latest command; otherwise the device snapshot wins.
   const historyState = stateFromControlHistoryRecord(latestHistoryRecord, fallbackBrightness)
   const latestDataState = stateFromLatestData(node?.latestData, fallbackBrightness)
 
+  // 手动模式：以最近控制指令为准，回退到 latestData
   if (isManualModeActive(node, now)) return historyState || latestDataState
-  return latestDataState || historyState
+  // 自动模式：latestData 为权威数据源（后端 DecisionEngine 写入），无数据时默认关灯
+  return latestDataState || { power: false, brightness: 0 }
 }

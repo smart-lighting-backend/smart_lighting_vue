@@ -9,6 +9,9 @@ import {
   resolveManualControlState,
 } from '../utils/manualControlState.js'
 
+const props = defineProps({
+  initialDeviceId: { type: String, default: '' },
+})
 const emit = defineEmits(['close'])
 
 const MANUAL_CONTROL_STATE_EVENT = 'manual-control-state-change'
@@ -76,8 +79,13 @@ onMounted(async () => {
   const raw = Array.isArray(res) ? res : (res.data || [])
   nodes.value = raw
   if (nodes.value.length) {
-    selectedNode.value = nodes.value[0]
-    await applyDeviceState(nodes.value[0])
+    if (props.initialDeviceId) {
+      const match = nodes.value.find(n => (n.deviceId || n.id) === props.initialDeviceId)
+      selectedNode.value = match || nodes.value[0]
+    } else {
+      selectedNode.value = nodes.value[0]
+    }
+    await applyDeviceState(selectedNode.value)
   }
 })
 

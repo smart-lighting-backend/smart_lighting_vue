@@ -353,7 +353,7 @@ onMounted(async () => {
       </main>
     </div>
 
-    <ManualControlModal v-if="showManual" @close="showManual = false" />
+    <ManualControlModal v-if="showManual" :initialDeviceId="route.params.id || ''" @close="showManual = false" />
 
     <!-- 用户基本信息弹窗 -->
     <Transition name="fade-up">

@@ -1,15 +1,16 @@
 <script setup>
-import { ref, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick, inject } from 'vue'
+import { ref, onMounted, onUnmounted, onActivated, onDeactivated, nextTick, inject } from 'vue'
 import { useRouter } from 'vue-router'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import * as echarts from 'echarts'
 import { fetchDashboardStats, fetchEnergyTrend, fetchDistrictData, triggerEnergyCalc, genTestData } from '../api/dashboard.js'
 import { fetchAllDevicesForMap } from '../api/devices.js'
-import { useAutoRefresh } from '../composables/useAutoRefresh.js'
-import { useMqtt } from '../composables/useMqtt.js'
+
 import { useCountUp } from '../composables/useCountUp.js'
 import { withCache, invalidateCache } from '../utils/requestCache.js'
+import { parseLatestData } from '../utils/manualControlState.js'
+import { getControlState } from '../utils/controlStateStore.js'
 import DeviceMap from '../components/DeviceMap.vue'
 
 const router = useRouter()
@@ -18,6 +19,18 @@ const router = useRouter()
 const immersive = inject('immersiveMode', null)
 const isImmersive = immersive?.isImmersive ?? ref(false)
 const toggleImmersive = immersive?.toggleImmersive ?? (() => {})
+
+// ═══ 3D 点击弹窗 + 悬停 ═══
+const popupDevice = ref(null)
+const hoveredDevice = ref(null)
+const hoverTooltipStyle = ref({})
+function showDevicePopup(device) {
+  popupDevice.value = device
+}
+function dismissPopup() { popupDevice.value = null }
+function goToDeviceDetail(deviceId) {
+  router.push(`/devices/${deviceId}?from=dashboard`)
+}
 
 // ═══ 视图切换 ═══
 const viewMode = ref('3d')  // '3d' | 'map'
@@ -34,9 +47,6 @@ const { display: dispTotal, start: startTotal } = useCountUp({ suffix: '' })
 const { display: dispOnline, start: startOnline } = useCountUp({ suffix: '%', decimals: 1 })
 const { display: dispSaving, start: startSaving } = useCountUp({ suffix: '%', decimals: 1 })
 const { display: dispEnergy, start: startEnergy } = useCountUp({ suffix: ' kWh', decimals: 1 })
-
-// ═══ MQTT ═══
-const { subscribe } = useMqtt()
 
 // ═══ 地图相关 ═══
 const highlightDeviceId = ref('')
@@ -55,7 +65,8 @@ let donutChart = null
 // ═══ Three.js 3D 场景 ═══
 const threeContainer = ref(null)
 let threeDispose = null
-const threeDevices = ref([])  // 3D 场景中的设备对象
+const threeDeviceStats = ref({ count: 0, online: 0, alarm: 0 })  // 3D 场景设备统计
+let syncDevices3D = null  // 外部可调用的设备同步函数
 
 // ═══ 数据加载 ═══
 async function loadAllData() {
@@ -75,7 +86,8 @@ async function loadAllData() {
     startEnergy(stats.value.todayEnergy || 0)
 
     fetchAllDevicesForMap().then(list => {
-      allDevices.value = Array.isArray(list) ? list : (list?.records || [])
+      const devs = Array.isArray(list) ? list : (list?.data || list?.records || [])
+      allDevices.value = devs
     }).catch(() => {})
   } catch {}
 }
@@ -85,24 +97,8 @@ async function softRefresh() {
   await loadAllData()
 }
 
-async function refreshLiveData() {
-  try {
-    const s = await fetchDashboardStats()
-    const newStats = s.data || {}
-    if (newStats.totalDevices != null && newStats.totalDevices !== stats.value.totalDevices) {
-      startTotal(newStats.totalDevices)
-    }
-    if (newStats.onlineRate != null && newStats.onlineRate !== stats.value.onlineRate) {
-      startOnline(newStats.onlineRate)
-    }
-    stats.value = { ...stats.value, ...newStats }
-    updateDonutChart()
-  } catch {}
-}
-
-useAutoRefresh(refreshLiveData, { interval: 300000, immediateFirst: false })
-
-subscribe('system/alarms', () => refreshLiveData())
+// MQTT 订阅保留（基础设施，供其他组件使用），但 Dashboard 不再依赖 MQTT 实时更新
+// 设备状态同步由 15s 自动页面刷新处理
 
 // ═══ 时钟 ═══
 function updateClock() {
@@ -255,12 +251,12 @@ function initThreeScene() {
 
   // Scene
   const scene = new THREE.Scene()
-  scene.background = new THREE.Color(0x060e1f)
-  scene.fog = new THREE.Fog(0x060e1f, 8, 40)
+  scene.background = new THREE.Color(0x0a1628)
+  scene.fog = new THREE.Fog(0x0a1628, 16, 60)
 
   // Camera
-  const camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 100)
-  camera.position.set(8, 7, 12)
+  const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100)
+  camera.position.set(10, 11, 20)
   camera.lookAt(0, 0, 0)
 
   // Renderer
@@ -276,17 +272,17 @@ function initThreeScene() {
   controls.enableDamping = true
   controls.dampingFactor = 0.08
   controls.autoRotate = true
-  controls.autoRotateSpeed = 0.3
+  controls.autoRotateSpeed = 0.5
   controls.minDistance = 5
-  controls.maxDistance = 25
+  controls.maxDistance = 35
   controls.maxPolarAngle = Math.PI / 2.2
   controls.target.set(0, 0, 0)
 
   // ── Lights ──
-  const ambient = new THREE.AmbientLight(0x1a2a4a, 0.8)
+  const ambient = new THREE.AmbientLight(0x2a3a5a, 1.2)
   scene.add(ambient)
 
-  const dirLight = new THREE.DirectionalLight(0x4dd0e1, 0.4)
+  const dirLight = new THREE.DirectionalLight(0x4dd0e1, 0.7)
   dirLight.position.set(10, 15, 5)
   dirLight.castShadow = true
   dirLight.shadow.mapSize.set(1024, 1024)
@@ -298,171 +294,486 @@ function initThreeScene() {
   dirLight.shadow.camera.bottom = -15
   scene.add(dirLight)
 
-  // ── Ground ──
-  const groundGeo = new THREE.PlaneGeometry(30, 30)
-  const groundMat = new THREE.MeshStandardMaterial({ color: 0x0a1a2e, roughness: 0.9, metalness: 0.1 })
+  // ══════════════════════════════════════════════════════════════
+  // Ground + Glow Rings
+  // ══════════════════════════════════════════════════════════════
+  const groundGeo = new THREE.PlaneGeometry(50, 50)
+  const groundMat = new THREE.MeshStandardMaterial({ color: 0x102030, roughness: 0.6, metalness: 0.2 })
   const ground = new THREE.Mesh(groundGeo, groundMat)
   ground.rotation.x = -Math.PI / 2
+  ground.position.y = -0.05
   ground.receiveShadow = true
   scene.add(ground)
 
-  // Grid
-  const gridHelper = new THREE.GridHelper(30, 24, 0x1a3a5a, 0x0a1a30)
-  gridHelper.position.y = 0.01
-  scene.add(gridHelper)
-
-  // ── Roads (cross pattern) ──
-  function addRoad(x, z, w, d) {
-    const geo = new THREE.PlaneGeometry(w, d)
-    const mat = new THREE.MeshStandardMaterial({ color: 0x151d2e, roughness: 0.85 })
-    const mesh = new THREE.Mesh(geo, mat)
-    mesh.rotation.x = -Math.PI / 2
-    mesh.position.set(x, 0.02, z)
-    mesh.receiveShadow = true
-    scene.add(mesh)
+  // Subtle dot grid on ground for depth perception
+  const dotsGeo = new THREE.BufferGeometry()
+  const dotsCount = 600
+  const dotsArr = new Float32Array(dotsCount * 3)
+  for (let i = 0; i < dotsCount; i++) {
+    dotsArr[i * 3] = (Math.random() - 0.5) * 40
+    dotsArr[i * 3 + 1] = 0.02
+    dotsArr[i * 3 + 2] = (Math.random() - 0.5) * 40
   }
-  addRoad(0, 0, 1.2, 30)   // 纵向
-  addRoad(0, 0, 30, 1.2)   // 横向
-  addRoad(-5, 0, 1.2, 30)
-  addRoad(5, 0, 1.2, 30)
-  addRoad(0, -5, 30, 1.2)
-  addRoad(0, 5, 30, 1.2)
+  dotsGeo.setAttribute('position', new THREE.BufferAttribute(dotsArr, 3))
+  const dotsMat = new THREE.PointsMaterial({ color: 0x2a4a6a, size: 0.08, transparent: true, opacity: 0.5, depthWrite: false })
+  const dots = new THREE.Points(dotsGeo, dotsMat)
+  scene.add(dots)
 
-  // ── Streetlight 3D model ──
-  function createStreetlight(x, z, color, status) {
+
+  // ══════════════════════════════════════════════════════════════
+  // Hex base + glow helpers
+  // ══════════════════════════════════════════════════════════════
+  function createHexBase(color, status) {
+    const geo = new THREE.CylinderGeometry(0.5, 0.55, 0.15, 6)
+    const on = status === 1 || status === 3
+    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.2, metalness: 0.8, emissive: on ? color : 0x000000, emissiveIntensity: status === 3 ? 1.0 : status === 1 ? 0.8 : 0 })
+    const base = new THREE.Mesh(geo, mat)
+    base.position.y = 0.07
+    base.castShadow = true
+    base.receiveShadow = true
+    base.name = 'hexBase'
+    return base
+  }
+
+  function createBaseGlow(color, status) {
+    const geo = new THREE.RingGeometry(0.5, 0.75, 32)
+    const mat = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: status === 3 ? 0.6 : status === 1 ? 0.5 : 0.05, depthWrite: false })
+    const glow = new THREE.Mesh(geo, mat)
+    glow.rotation.x = -Math.PI / 2
+    glow.position.y = 0.02
+    glow.name = 'baseGlow'
+    return glow
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // Streetlight 3D model (scaled up 2x for visibility)
+  // ══════════════════════════════════════════════════════════════
+  // lightState: 'on' | 'off' | 'alarm'
+  function createStreetlight(baseColor, ringColor, status, lightState) {
     const group = new THREE.Group()
 
+    const base = createHexBase(baseColor, status)
+    group.add(base)
+    group.add(createBaseGlow(ringColor, status))
+
     // Pole
-    const poleGeo = new THREE.CylinderGeometry(0.06, 0.08, 2.8, 8)
-    const poleMat = new THREE.MeshStandardMaterial({ color: 0x3a4a5a, roughness: 0.4, metalness: 0.7 })
+    const poleGeo = new THREE.CylinderGeometry(0.08, 0.12, 4, 8)
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0x5a6a7a, roughness: 0.3, metalness: 0.9 })
     const pole = new THREE.Mesh(poleGeo, poleMat)
-    pole.position.y = 1.4
+    pole.position.y = 2
     pole.castShadow = true
     group.add(pole)
 
     // Lamp arm
-    const armGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.5, 6)
-    const armMat = new THREE.MeshStandardMaterial({ color: 0x5a6a7a, roughness: 0.3, metalness: 0.6 })
+    const armGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.7, 6)
+    const armMat = new THREE.MeshStandardMaterial({ color: 0x7a8a9a, roughness: 0.25, metalness: 0.7 })
     const arm = new THREE.Mesh(armGeo, armMat)
     arm.rotation.z = Math.PI / 2
-    arm.position.set(0.25, 2.7, 0)
+    arm.position.set(0.35, 3.8, 0)
     group.add(arm)
 
     // Lamp housing
-    const housingGeo = new THREE.CylinderGeometry(0.15, 0.18, 0.3, 8)
-    const housingMat = new THREE.MeshStandardMaterial({ color: 0x4a5a6a, roughness: 0.3, metalness: 0.5 })
+    const housingGeo = new THREE.CylinderGeometry(0.2, 0.25, 0.45, 8)
+    const housingMat = new THREE.MeshStandardMaterial({ color: 0x6a7a8a, roughness: 0.25, metalness: 0.6 })
     const housing = new THREE.Mesh(housingGeo, housingMat)
-    housing.position.set(0.48, 2.6, 0)
+    housing.position.set(0.65, 3.65, 0)
     housing.castShadow = true
     group.add(housing)
 
-    // Bulb glow sphere
-    const bulbGeo = new THREE.SphereGeometry(0.08, 8, 8)
-    const emissiveColor = color || 0x4dd0e1
-    const bulbMat = new THREE.MeshStandardMaterial({ color: emissiveColor, emissive: emissiveColor, emissiveIntensity: status === 1 ? 2 : 0.3, roughness: 0.2 })
+    // Bulb — driven by lightState
+    const bulbCfg = lightState === 'alarm' ? BULB_ALARM : lightState === 'on' ? BULB_ON : BULB_OFF
+    const bulbGeo = new THREE.SphereGeometry(0.15, 16, 16)
+    const bulbMat = new THREE.MeshStandardMaterial({ color: bulbCfg.color, emissive: bulbCfg.emissive > 0 ? bulbCfg.color : 0x000000, emissiveIntensity: bulbCfg.emissive, roughness: 0.08 })
     const bulb = new THREE.Mesh(bulbGeo, bulbMat)
-    bulb.position.set(0.48, 2.45, 0)
+    bulb.position.set(0.65, 3.4, 0)
+    bulb.name = 'bulb'
     group.add(bulb)
 
-    // PointLight for online devices
-    if (status === 1) {
-      const ptLight = new THREE.PointLight(emissiveColor, 1.5, 3, 1)
-      ptLight.position.copy(bulb.position)
-      group.add(ptLight)
-    } else if (status === 3) {
-      // Alarm — red pulsing handled in animation loop
-      const ptLight = new THREE.PointLight(0xef5350, 2, 3.5, 1)
-      ptLight.position.copy(bulb.position)
-      ptLight.name = 'alarmLight'
-      group.add(ptLight)
+    // PointLight — driven by lightState
+    const ptColor = lightState === 'alarm' ? 0xef5350 : lightState === 'on' ? 0xfff8e7 : 0x000000
+    const ptLight = new THREE.PointLight(ptColor, lightState === 'off' ? 0 : 4, 7, 0.5)
+    ptLight.position.copy(bulb.position)
+    ptLight.name = 'ptLight'
+    group.add(ptLight)
+
+    // Ground light disk — driven by lightState
+    const diskGeo = new THREE.CircleGeometry(0.7, 24)
+    const diskColor = lightState === 'alarm' ? 0xef5350 : lightState === 'on' ? 0xfff8e7 : 0x000000
+    const diskMat = new THREE.MeshBasicMaterial({ color: diskColor, transparent: true, opacity: bulbCfg.diskOpacity, depthWrite: false })
+    const disk = new THREE.Mesh(diskGeo, diskMat)
+    disk.rotation.x = -Math.PI / 2
+    disk.position.y = 0.005
+    disk.name = 'lightDisk'
+    group.add(disk)
+
+    // Light beam cone — only when ON
+    if (lightState === 'on') {
+      const beamGeo = new THREE.CylinderGeometry(0.05, 0.45, 3.3, 16, 1, true)
+      const beamMat = new THREE.MeshBasicMaterial({ color: 0xfff8e7, transparent: true, opacity: 0.08, depthWrite: false, side: THREE.DoubleSide })
+      const beam = new THREE.Mesh(beamGeo, beamMat)
+      beam.position.set(0.65, 1.75, 0)
+      beam.name = 'beam'
+      group.add(beam)
     }
 
-    group.position.set(x, 0, z)
     return group
   }
 
-  // ── Place streetlights in grid ──
-  const deviceObjects = []
-  const gridSize = 5
-  const spacing = 2.2
-  const offset = (gridSize - 1) * spacing / 2
+  // ══════════════════════════════════════════════════════════════
+  // Color maps
+  // ══════════════════════════════════════════════════════════════
+  const deviceObjectMap = new Map()
+  const areaGroups = new Map()
+  let connectionLines = []
+  let areaMarkerRings = []
 
-  for (let row = 0; row < gridSize; row++) {
-    for (let col = 0; col < gridSize; col++) {
-      const x = col * spacing - offset
-      const z = row * spacing - offset
-      // Randomize placement slightly
-      const jx = x + (Math.random() - 0.5) * 0.6
-      const jz = z + (Math.random() - 0.5) * 0.6
-      // Random status weighted toward online
-      const r = Math.random()
-      const status = r < 0.78 ? 1 : r < 0.88 ? 2 : r < 0.95 ? 3 : 0
-      const color = status === 1 ? 0x4dd0e1 : status === 3 ? 0xef5350 : 0x4a5a6a
-      const sl = createStreetlight(jx, jz, color, status)
-      sl.userData = { status, color, row, col }
-      scene.add(sl)
-      deviceObjects.push(sl)
+  const STATUS_3D  = { 1: 0x4dd0e1, 2: 0x708090, 3: 0xef5350, 0: 0x404050 }  // hex base
+  const RING_3D    = { 1: 0x4dd0e1, 2: 0xff4444, 3: 0xef5350, 0: 0x404050 }  // bottom ring: offline=RED
+  const BULB_ON    = { color: 0xffffff, emissive: 8, diskOpacity: 0.18 }        // light ON
+  const BULB_OFF   = { color: 0x111111, emissive: 0, diskOpacity: 0 }           // light OFF
+  const BULB_ALARM = { color: 0xef5350, emissive: 2.5, diskOpacity: 0.22 }      // alarm
+
+  // Determine light state: control cache > latestData.action > illuminance > default
+  function getLightState(device) {
+    const did = device.deviceId
+    const s = device.status != null ? device.status : 2
+    if (s === 3) return 'alarm'
+    if (s !== 1) return 'off'
+    // 1) Global control state cache (set by sendControlCommand in real-time)
+    const cached = getControlState(did)
+    if (cached) {
+      if (cached.action === 'OFF' || cached.brightness === 0) return 'off'
+      return 'on'
+    }
+    // 2) latestData.action (from MQTT or backend snapshot)
+    const data = parseLatestData(device.latestData)
+    if (data?.action) {
+      if (data.action === 'OFF' || data.brightness === 0) return 'off'
+      return 'on'
+    }
+    // 3) Illuminance guess
+    if (data?.illuminance != null) {
+      return data.illuminance > 80 ? 'on' : 'off'
+    }
+    // 4) Default: online with no data → ON
+    return 'on'
+  }
+
+  // Apply light state to a device's visual elements
+  function applyLightState(entry, ls) {
+    const bulbCfg = ls === 'alarm' ? BULB_ALARM : ls === 'on' ? BULB_ON : BULB_OFF
+    const bulbCol = new THREE.Color(bulbCfg.color)
+    if (entry.bulb) {
+      entry.bulb.material.color.set(bulbCol)
+      entry.bulb.material.emissive.set(bulbCfg.emissive > 0 ? bulbCol : new THREE.Color(0x000000))
+      entry.bulb.material.emissiveIntensity = bulbCfg.emissive
+    }
+    const ptCol = ls === 'alarm' ? 0xef5350 : ls === 'on' ? 0xfff8e7 : 0x000000
+    if (entry.ptLight) { entry.ptLight.color.setHex(ptCol); entry.ptLight.intensity = ls === 'off' ? 0 : 4 }
+    const dkCol = ls === 'alarm' ? 0xef5350 : ls === 'on' ? 0xfff8e7 : 0x000000
+    if (entry.disk) { entry.disk.material.color.setHex(dkCol); entry.disk.material.opacity = bulbCfg.diskOpacity }
+
+    let beam = entry.group.children.find(c => c.name === 'beam')
+    if (ls === 'on' && !beam) {
+      const beamGeo = new THREE.CylinderGeometry(0.05, 0.45, 3.3, 16, 1, true)
+      const beamMat = new THREE.MeshBasicMaterial({ color: 0xfff8e7, transparent: true, opacity: 0.08, depthWrite: false, side: THREE.DoubleSide })
+      beam = new THREE.Mesh(beamGeo, beamMat)
+      beam.position.set(0.65, 1.75, 0)
+      beam.name = 'beam'
+      entry.group.add(beam)
+    } else if (ls !== 'on' && beam) {
+      beam.geometry.dispose(); beam.material.dispose(); entry.group.remove(beam)
     }
   }
 
-  threeDevices.value = deviceObjects
-
-  // ── Building blocks (decorative) ──
-  for (let i = 0; i < 12; i++) {
-    const bx = (Math.random() - 0.5) * 14
-    const bz = (Math.random() - 0.5) * 14
-    const bh = 0.6 + Math.random() * 2.5
-    const bw = 0.5 + Math.random() * 1.2
-    const bGeo = new THREE.BoxGeometry(bw, bh, bw)
-    const bMat = new THREE.MeshStandardMaterial({ color: 0x0d1f33, roughness: 0.8, metalness: 0.2, transparent: true, opacity: 0.7 })
-    const building = new THREE.Mesh(bGeo, bMat)
-    building.position.set(bx, bh / 2, bz)
-    building.receiveShadow = true
-    building.castShadow = true
-    scene.add(building)
+  function clearConnections() {
+    connectionLines.forEach(l => { l.geometry.dispose(); scene.remove(l) })
+    connectionLines = []
   }
 
-  // ── Particle ring ──
-  const particlesGeo = new THREE.BufferGeometry()
-  const particlesCount = 200
-  const positions = new Float32Array(particlesCount * 3)
-  for (let i = 0; i < particlesCount; i++) {
-    const angle = (i / particlesCount) * Math.PI * 2
-    const radius = 6.5 + Math.random() * 1.5
-    const height = (Math.random() - 0.5) * 1.5
-    positions[i * 3] = Math.cos(angle) * radius
-    positions[i * 3 + 1] = height + 1.5
-    positions[i * 3 + 2] = Math.sin(angle) * radius
+  function drawConnections() {
+    clearConnections()
+    const mat = new THREE.LineBasicMaterial({ color: 0x4dd0e1, transparent: true, opacity: 0.28, depthWrite: false, linewidth: 1 })
+    areaGroups.forEach((info) => {
+      const ids = info.deviceIds.filter(id => deviceObjectMap.has(id))
+      if (ids.length < 2) return
+      // Star topology: connect each to area center point
+      const cx = info.center.x, cz = info.center.z
+      ids.forEach(id => {
+        const entry = deviceObjectMap.get(id)
+        if (!entry) return
+        const p = entry.group.position
+        const pts = [new THREE.Vector3(p.x, 0.06, p.z), new THREE.Vector3(cx, 0.06, cz)]
+        const geo = new THREE.BufferGeometry().setFromPoints(pts)
+        const line = new THREE.Line(geo, mat)
+        scene.add(line)
+        connectionLines.push(line)
+      })
+    })
   }
-  particlesGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  const particlesMat = new THREE.PointsMaterial({ color: 0x4dd0e1, size: 0.04, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false })
-  const particles = new THREE.Points(particlesGeo, particlesMat)
-  scene.add(particles)
 
-  // ── Animation Loop ──
+  function makeTextSprite(text) {
+    const canvas = document.createElement('canvas')
+    canvas.width = 256; canvas.height = 64
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = 'rgba(0,0,0,0)'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.font = 'bold 28px "Microsoft YaHei", sans-serif'
+    ctx.fillStyle = '#4dd0e1'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(text, 128, 32)
+    const tex = new THREE.CanvasTexture(canvas)
+    tex.minFilter = THREE.LinearFilter
+    const spriteMat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false })
+    const sprite = new THREE.Sprite(spriteMat)
+    sprite.scale.set(4, 1, 1)
+    return sprite
+  }
+
+  const areaPlatforms = []
+  const areaLabelSprites = []
+  const PLATFORM_COLORS = [0x142d4a, 0x0e2440, 0x122d4f, 0x0d2244, 0x152e52, 0x102548, 0x132c4e, 0x0c2040, 0x162f54, 0x112646]
+
+  function updateAreaMarkers() {
+    areaMarkerRings.forEach(r => { r.geometry.dispose(); r.material.dispose(); scene.remove(r) })
+    areaMarkerRings = []
+    areaLabelSprites.forEach(s => { if (s.material.map) s.material.map.dispose(); s.material.dispose(); scene.remove(s) })
+    areaLabelSprites.length = 0
+    areaPlatforms.forEach(p => { p.geometry.dispose(); p.material.dispose(); scene.remove(p) })
+    areaPlatforms.length = 0
+
+    areaGroups.forEach((info, name) => {
+      const rad = info.platformRadius || 1.0
+
+      // Hexagonal platform base
+      const pfGeo = new THREE.CylinderGeometry(rad + 0.3, rad + 0.45, 0.08, 6)
+      const pfCol = PLATFORM_COLORS[info.areaIndex % PLATFORM_COLORS.length]
+      const pfMat = new THREE.MeshStandardMaterial({ color: pfCol, roughness: 0.35, metalness: 0.35, emissive: pfCol, emissiveIntensity: 0.3, transparent: true, opacity: 0.55 })
+      const platform = new THREE.Mesh(pfGeo, pfMat)
+      platform.position.set(info.center.x, 0.04, info.center.z)
+      platform.receiveShadow = true
+      scene.add(platform)
+      areaPlatforms.push(platform)
+
+      // Hex edge border
+      const edgeGeo = new THREE.RingGeometry(rad + 0.25, rad + 0.35, 6)
+      const edgeMat = new THREE.MeshBasicMaterial({ color: 0x3377aa, side: THREE.DoubleSide, transparent: true, opacity: 0.4, depthWrite: false })
+      const edge = new THREE.Mesh(edgeGeo, edgeMat)
+      edge.rotation.x = -Math.PI / 2
+      edge.position.set(info.center.x, 0.085, info.center.z)
+      scene.add(edge)
+      areaMarkerRings.push(edge)
+
+      // Label
+      const label = makeTextSprite(name)
+      label.position.set(info.center.x, 1.4, info.center.z)
+      label.scale.set(5, 1.3, 1)
+      scene.add(label)
+      areaLabelSprites.push(label)
+    })
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // Layout: area-grouped clustering
+  // ══════════════════════════════════════════════════════════════
+  function layoutDevices(devices) {
+    // Dispose old
+    deviceObjectMap.forEach(entry => {
+      scene.remove(entry.group)
+      entry.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) { if (Array.isArray(c.material)) c.material.forEach(m => m.dispose()); else c.material.dispose() } })
+    })
+    deviceObjectMap.clear()
+    areaGroups.clear()
+    clearConnections()
+    updateAreaMarkers()
+    if (!devices || devices.length === 0) return
+
+    // Group by area
+    const areaMap = new Map()
+    devices.forEach(d => {
+      const area = d.area || '默认区域'
+      if (!areaMap.has(area)) areaMap.set(area, [])
+      areaMap.get(area).push(d)
+    })
+
+    const areaNames = [...areaMap.keys()]
+    const areaCount = areaNames.length
+    const layoutRadius = areaCount <= 1 ? 0 : 9
+
+    areaNames.forEach((areaName, areaIdx) => {
+      const areaDevices = areaMap.get(areaName)
+      const angle = (areaIdx / areaCount) * Math.PI * 2 - Math.PI / 2
+      const cx = Math.cos(angle) * layoutRadius
+      const cz = Math.sin(angle) * layoutRadius
+      const n = areaDevices.length
+      const subR = n <= 1 ? 0 : Math.max(1.8, n * 0.45)
+      areaGroups.set(areaName, { center: { x: cx, z: cz }, deviceIds: areaDevices.map(d => d.deviceId), platformRadius: subR + 0.8, areaIndex: areaIdx })
+
+      areaDevices.forEach((d, i) => {
+        const subAngle = (i / Math.max(n, 1)) * Math.PI * 2
+        const x = cx + Math.cos(subAngle) * subR
+        const z = cz + Math.sin(subAngle) * subR
+
+        const s = d.status != null ? d.status : 2
+        const ls = getLightState(d)
+        const baseColor = STATUS_3D[s] || 0x4a5a6a
+        const ringColor = RING_3D[s] || 0x4a5a6a
+        const group = createStreetlight(baseColor, ringColor, s, ls)
+        group.position.set(x, 0, z)
+        group.userData = { deviceId: d.deviceId, deviceName: d.name, area: areaName, status: s, lightState: ls }
+        scene.add(group)
+        deviceObjectMap.set(d.deviceId, {
+          group,
+          base: group.children.find(c => c.name === 'hexBase'),
+          baseGlow: group.children.find(c => c.name === 'baseGlow'),
+          bulb: group.children.find(c => c.name === 'bulb'),
+          ptLight: group.children.find(c => c.name === 'ptLight'),
+          disk: group.children.find(c => c.name === 'lightDisk'),
+          beam: group.children.find(c => c.name === 'beam'),
+        })
+      })
+    })
+
+    drawConnections()
+    updateAreaMarkers()
+    threeDeviceStats.value = {
+      count: devices.length,
+      online: devices.filter(d => d.status === 1).length,
+      alarm: devices.filter(d => d.status === 3).length,
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // syncDevices: diff-based add/remove/status update
+  // ══════════════════════════════════════════════════════════════
+  function syncDevices(newDevices) {
+    if (!newDevices || newDevices.length === 0) return
+
+    const newIds = new Set(newDevices.map(d => d.deviceId))
+    const oldIds = new Set(deviceObjectMap.keys())
+
+    // Remove deleted
+    for (const id of oldIds) {
+      if (!newIds.has(id)) {
+        const entry = deviceObjectMap.get(id)
+        scene.remove(entry.group)
+        entry.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) { if (Array.isArray(c.material)) c.material.forEach(m => m.dispose()); else c.material.dispose() } })
+        deviceObjectMap.delete(id)
+      }
+    }
+
+    // Check if re-layout needed (new devices or area change)
+    let needRelayout = false
+    for (const d of newDevices) {
+      if (!deviceObjectMap.has(d.deviceId)) { needRelayout = true; break }
+      const ex = deviceObjectMap.get(d.deviceId)
+      if (ex.group.userData.area !== (d.area || '默认区域')) { needRelayout = true; break }
+    }
+
+    if (needRelayout) {
+      layoutDevices(newDevices)
+      return
+    }
+
+    // Status-only update
+    for (const d of newDevices) {
+      const entry = deviceObjectMap.get(d.deviceId)
+      if (!entry) continue
+      const s = d.status != null ? d.status : 2
+      const ls = getLightState(d)
+      entry.group.userData.status = s
+      entry.group.userData.lightState = ls
+      const e = s === 1 || s === 3
+      const baseHex  = new THREE.Color(STATUS_3D[s] || 0x4a5a6a)
+      const ringHex  = new THREE.Color(RING_3D[s] || 0x4a5a6a)
+      if (entry.base)  { entry.base.material.color.set(baseHex); entry.base.material.emissive.set(e ? baseHex : new THREE.Color(0x000000)); entry.base.material.emissiveIntensity = s === 3 ? 1.0 : s === 1 ? 0.8 : 0 }
+      if (entry.baseGlow) { entry.baseGlow.material.color.set(ringHex); entry.baseGlow.material.opacity = s === 3 ? 0.6 : s === 1 ? 0.5 : s === 2 ? 0.35 : 0.05 }
+      // Bulb / light / disk / beam — driven by lightState
+      const bulbCfg = ls === 'alarm' ? BULB_ALARM : ls === 'on' ? BULB_ON : BULB_OFF
+      const bulbCol = new THREE.Color(bulbCfg.color)
+      applyLightState(entry, ls)
+    }
+
+    threeDeviceStats.value = {
+      count: newDevices.length,
+      online: newDevices.filter(d => d.status === 1).length,
+      alarm: newDevices.filter(d => d.status === 3).length,
+    }
+  }
+
+  // 从 latestData 同步所有设备的灯光状态（无需额外 API 调用）
+  function syncLightStates(devices) {
+    const devMap = new Map(devices.map(d => [d.deviceId, d]))
+    deviceObjectMap.forEach((entry, id) => {
+      const d = devMap.get(id)
+      if (!d) return
+      const ls = getLightState(d)
+      if (ls !== entry.group.userData.lightState) {
+        entry.group.userData.lightState = ls
+        applyLightState(entry, ls)
+      }
+    })
+  }
+
+  // 每次同步都完全重建 3D 设备（用最新数据），不再做增量更新
+  syncDevices3D = (devs) => {
+    layoutDevices(devs)
+  }
+
+  // Scene self-loads devices (full rebuild)
+  fetchAllDevicesForMap().then(raw => {
+    const devs = Array.isArray(raw) ? raw : (raw?.data || raw?.records || [])
+    if (devs.length > 0) {
+      layoutDevices(devs)
+    }
+  }).catch(() => {})
+
+  // ══════════════════════════════════════════════════════════════
+  // Particles (3-layer)
+  // ══════════════════════════════════════════════════════════════
+  const particlesGroup = new THREE.Group()
+  for (let ring = 0; ring < 3; ring++) {
+    const pGeo = new THREE.BufferGeometry()
+    const n = 90
+    const arr = new Float32Array(n * 3)
+    const r = 10 + ring * 2.5
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + ring * 1.2
+      const rr = r + (Math.random() - 0.5) * 1.2
+      arr[i * 3] = Math.cos(a) * rr
+      arr[i * 3 + 1] = 0.5 + ring * 0.6 + (Math.random() - 0.5) * 0.8
+      arr[i * 3 + 2] = Math.sin(a) * rr
+    }
+    pGeo.setAttribute('position', new THREE.BufferAttribute(arr, 3))
+    const pMat = new THREE.PointsMaterial({ color: 0x4dd0e1, size: 0.055, transparent: true, opacity: 0.4 - ring * 0.08, blending: THREE.AdditiveBlending, depthWrite: false })
+    particlesGroup.add(new THREE.Points(pGeo, pMat))
+  }
+  scene.add(particlesGroup)
+
+  // ══════════════════════════════════════════════════════════════
+  // Animation loop
+  // ══════════════════════════════════════════════════════════════
   let lastTime = performance.now()
   function animate() {
     requestAnimationFrame(animate)
     const now = performance.now()
-    const dt = Math.min((now - lastTime) / 1000, 0.1) // cap delta to avoid spiral
+    const dt = Math.min((now - lastTime) / 1000, 0.1)
     lastTime = now
     controls.update()
 
-    // Particle ring rotation
-    particles.rotation.y += dt * 0.15
+    particlesGroup.children.forEach((p, i) => {
+      p.rotation.y += dt * (0.12 + i * 0.04) * (i % 2 === 0 ? 1 : -0.7)
+    })
 
-    // Alarm light pulsing
-    deviceObjects.forEach(sl => {
-      if (sl.userData.status === 3) {
-        const alarmLight = sl.children.find(c => c.name === 'alarmLight')
-        if (alarmLight) {
-          alarmLight.intensity = 1.2 + Math.sin(Date.now() * 0.008) * 0.8
-        }
-        // Pulse the bulb emissive for alarm devices
-        const bulbMesh = sl.children.find(c => c.isMesh && c.material.emissive && c.material.emissive.getHex() !== 0x000000)
-        if (bulbMesh) {
-          bulbMesh.material.emissiveIntensity = 1.2 + Math.sin(Date.now() * 0.008) * 0.8
-        }
+    // Alarm pulsing
+    deviceObjectMap.forEach(entry => {
+      if (entry.group.userData.status === 3) {
+        const wave = 1.2 + Math.sin(Date.now() * 0.008) * 1.3
+        if (entry.ptLight) entry.ptLight.intensity = wave
+        if (entry.bulb) entry.bulb.material.emissiveIntensity = 1.2 + Math.sin(Date.now() * 0.008) * 1.5
+        if (entry.base) entry.base.material.emissiveIntensity = 0.4 + Math.sin(Date.now() * 0.008) * 0.35
+        if (entry.baseGlow) entry.baseGlow.material.opacity = 0.3 + Math.sin(Date.now() * 0.008) * 0.25
       }
     })
 
@@ -470,7 +781,9 @@ function initThreeScene() {
   }
   animate()
 
-  // ── Resize ──
+  // ══════════════════════════════════════════════════════════════
+  // Resize
+  // ══════════════════════════════════════════════════════════════
   const resizeObserver = new ResizeObserver(() => {
     const w = container.clientWidth
     const h = container.clientHeight
@@ -481,7 +794,9 @@ function initThreeScene() {
   })
   resizeObserver.observe(container)
 
-  // ── Click handler ──
+  // ══════════════════════════════════════════════════════════════
+  // Click handler
+  // ══════════════════════════════════════════════════════════════
   const raycaster = new THREE.Raycaster()
   const mouse = new THREE.Vector2()
   function onClick(event) {
@@ -489,22 +804,52 @@ function initThreeScene() {
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
     raycaster.setFromCamera(mouse, camera)
-    const intersects = raycaster.intersectObjects(deviceObjects, true)
+    const allGroups = [...deviceObjectMap.values()].map(e => e.group)
+    const intersects = raycaster.intersectObjects(allGroups, true)
     if (intersects.length > 0) {
       let obj = intersects[0].object
-      while (obj && !deviceObjects.includes(obj)) obj = obj.parent
+      while (obj && !allGroups.includes(obj)) obj = obj.parent
       if (obj) {
         const d = obj.userData
-        const statusLabels = { 0: '停用', 1: '在线', 2: '离线', 3: '告警' }
-        alert(`路灯 #${d.row}-${d.col}\n状态: ${statusLabels[d.status] || '未知'}`)
+        if (d.deviceId) {
+          showDevicePopup(d)
+        }
+      } else {
+        dismissPopup()
       }
     }
   }
   renderer.domElement.addEventListener('click', onClick)
 
+  // Hover detection
+  function onMouseMove(event) {
+    const rect = renderer.domElement.getBoundingClientRect()
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+    raycaster.setFromCamera(mouse, camera)
+    const allGroups = [...deviceObjectMap.values()].map(e => e.group)
+    const intersects = raycaster.intersectObjects(allGroups, true)
+    if (intersects.length > 0) {
+      let obj = intersects[0].object
+      while (obj && !allGroups.includes(obj)) obj = obj.parent
+      if (obj) {
+        const d = obj.userData
+        hoveredDevice.value = { name: d.deviceName || d.deviceId, area: d.area, status: d.status }
+        hoverTooltipStyle.value = { left: (event.clientX + 16) + 'px', top: (event.clientY - 10) + 'px' }
+        return
+      }
+    }
+    hoveredDevice.value = null
+  }
+  renderer.domElement.addEventListener('mousemove', onMouseMove)
+
+  // ══════════════════════════════════════════════════════════════
+  // Dispose
+  // ══════════════════════════════════════════════════════════════
   threeDispose = () => {
     resizeObserver.disconnect()
     renderer.domElement.removeEventListener('click', onClick)
+    renderer.domElement.removeEventListener('mousemove', onMouseMove)
     controls.dispose()
     renderer.dispose()
     scene.traverse(obj => {
@@ -514,6 +859,13 @@ function initThreeScene() {
         else obj.material.dispose()
       }
     })
+    deviceObjectMap.clear()
+    areaGroups.clear()
+    areaLabelSprites.forEach(s => { if (s.material.map) s.material.map.dispose(); s.material.dispose() })
+    areaLabelSprites.length = 0
+    areaPlatforms.forEach(p => { p.geometry.dispose(); p.material.dispose() })
+    areaPlatforms.length = 0
+    syncDevices3D = null
     if (container.contains(renderer.domElement)) {
       container.removeChild(renderer.domElement)
     }
@@ -552,28 +904,67 @@ onMounted(async () => {
   await loadAllData()
   await nextTick()
   initThreeScene()
+  // If devices loaded before the 3D scene was ready, sync them now
+  if (allDevices.value.length > 0 && syncDevices3D) {
+    syncDevices3D(allDevices.value)
+  }
   await nextTick()
   initEnergyChart({})
   initDonutChart()
   initBarChart(districts.value || [])
   window.addEventListener('resize', handleAllChartResize)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
 })
+
+// 兜底方案：每 15 秒全量刷新页面，确保 3D 状态与后端一致
+// 计时仅在停留在数字孪生页面(3D视图)时累计，离开或切换标签页后重置
+let autoReloadTimer = null
+function startAutoReload() {
+  stopAutoReload()
+  autoReloadTimer = setInterval(() => {
+    if (document.hidden || viewMode.value !== '3d') return
+    location.reload()
+  }, 15000)
+}
+function resetAutoReload() {
+  if (autoReloadTimer) { startAutoReload() }
+}
+function stopAutoReload() {
+  if (autoReloadTimer) { clearInterval(autoReloadTimer); autoReloadTimer = null }
+}
+// 3D 场景初始化后启动自动刷新计时
+const origInitThree = initThreeScene
+initThreeScene = function() {
+  origInitThree()
+  startAutoReload()
+}
 
 onActivated(() => {
   handleAllChartResize()
   if (!threeDispose && threeContainer.value && viewMode.value === '3d') {
-    nextTick(initThreeScene)
+    nextTick(() => initThreeScene())
   }
 })
 
 onDeactivated(() => {
   destroyThreeScene()
+  stopAutoReload()
 })
+
+// ═══ 标签页可见性变化时刷新 3D 数据并重置自动刷新计时 ═══
+function handleVisibilityChange() {
+  if (document.hidden) return
+  if (viewMode.value !== '3d') return
+  // 切回标签页后重置 15s 计时
+  resetAutoReload()
+}
 
 onUnmounted(() => {
   clearInterval(clockTimer)
+  stopAutoReload()
   destroyThreeScene()
   window.removeEventListener('resize', handleAllChartResize)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
   energyChart?.dispose()
   donutChart?.dispose()
   barChart?.dispose()
@@ -601,6 +992,7 @@ watch(districts, (data) => {
 watch(() => stats.value.onlineDevices, () => {
   updateDonutChart()
 })
+
 </script>
 
 <template>
@@ -732,7 +1124,22 @@ watch(() => stats.value.onlineDevices, () => {
           </div>
 
           <!-- 3D 场景 -->
-          <div v-show="viewMode === '3d'" ref="threeContainer" class="three-container"></div>
+          <div v-show="viewMode === '3d'" ref="threeContainer" class="three-container">
+            <!-- Hover tooltip -->
+            <div v-if="hoveredDevice" class="three-hover-tip" :style="hoverTooltipStyle">
+              {{ hoveredDevice.name }} · {{ hoveredDevice.area }}
+            </div>
+            <!-- Click popup -->
+            <Transition name="popup-fade">
+              <div v-if="popupDevice" class="three-popup" @click.stop>
+                <div class="three-popup-name">{{ popupDevice.deviceName || popupDevice.deviceId }}</div>
+                <div class="three-popup-row"><span>区域</span><span>{{ popupDevice.area || '--' }}</span></div>
+                <div class="three-popup-row"><span>状态</span><span :class="'popup-status-' + popupDevice.status">{{ {0:'停用',1:'在线',2:'离线',3:'告警'}[popupDevice.status] || '未知' }}</span></div>
+                <div class="three-popup-row"><span>灯光</span><span :class="popupDevice.lightState === 'on' ? 'popup-status-1' : popupDevice.lightState === 'alarm' ? 'popup-status-3' : ''">{{ popupDevice.lightState === 'on' ? '已开灯' : popupDevice.lightState === 'alarm' ? '告警' : '已关灯' }}</span></div>
+                <button class="three-popup-btn" @click="goToDeviceDetail(popupDevice.deviceId)">查看详情 →</button>
+              </div>
+            </Transition>
+          </div>
 
           <!-- 地图视图 -->
           <div v-show="viewMode === 'map'" class="map-container">
@@ -936,8 +1343,8 @@ watch(() => stats.value.onlineDevices, () => {
   gap: 10px;
   min-width: 0;
 }
-.panel-col-left { width: 22%; flex-shrink: 0; }
-.panel-col-right { width: 22%; flex-shrink: 0; }
+.panel-col-left { width: 19%; flex-shrink: 0; }
+.panel-col-right { width: 19%; flex-shrink: 0; }
 .panel-col-center { flex: 1; }
 .flex-1 { flex: 1; min-height: 0; }
 
@@ -1162,8 +1569,62 @@ watch(() => stats.value.onlineDevices, () => {
   width: 100%; height: 100%;
   overflow: hidden;
   border-radius: 6px;
+  position: relative;
 }
 .three-container :deep(canvas) { display: block; }
+
+/* ── Hover tooltip ── */
+.three-hover-tip {
+  position: fixed;
+  background: rgba(8, 24, 52, 0.92);
+  border: 1px solid rgba(77, 208, 225, 0.25);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #d0eaf8;
+  pointer-events: none;
+  z-index: 9;
+  white-space: nowrap;
+}
+
+/* ── 3D click popup (fixed at top-center) ── */
+.three-popup {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(8, 24, 52, 0.96);
+  border: 1px solid rgba(77, 208, 225, 0.35);
+  border-radius: 8px;
+  padding: 12px 16px;
+  min-width: 200px;
+  z-index: 10;
+  pointer-events: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(12px);
+}
+.three-popup-name {
+  font-size: 14px; font-weight: 700; color: #d0eaf8;
+  margin-bottom: 6px; border-bottom: 1px solid rgba(77,208,225,0.15); padding-bottom: 4px;
+}
+.three-popup-row {
+  display: flex; justify-content: space-between; gap: 12px;
+  font-size: 11px; color: rgba(140,190,220,0.6); margin: 2px 0;
+}
+.three-popup-row span:last-child { color: rgba(200,230,245,0.85); }
+.popup-status-1 { color: #4caf82 !important; }
+.popup-status-3 { color: #ef5350 !important; }
+.popup-status-2, .popup-status-0 { color: rgba(140,190,220,0.5) !important; }
+.three-popup-btn {
+  display: block; width: 100%; margin-top: 8px; padding: 6px 0;
+  background: rgba(0, 150, 220, 0.2); border: 1px solid rgba(77, 208, 225, 0.3);
+  border-radius: 4px; color: #4dd0e1; font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: all 0.2s;
+}
+.three-popup-btn:hover { background: rgba(0, 150, 220, 0.35); }
+
+.popup-fade-enter-active, .popup-fade-leave-active { transition: opacity 0.15s; }
+.popup-fade-enter-from, .popup-fade-leave-to { opacity: 0; }
 
 .map-container {
   width: 100%; height: 100%;

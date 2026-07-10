@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, onActivated, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchStrategyGroups, createStrategy, fetchStrategyDetail, updateStrategy, testStrategy } from '../api/strategy.js'
 import { ElMessage } from 'element-plus'
@@ -143,82 +143,102 @@ function unusedConditions() {
   return AVAILABLE_CONDITIONS.filter(o => !conditionItems.value.some(c => c.key === o.key))
 }
 
-onMounted(async () => {
+async function loadPolicyData() {
   const res = await fetchStrategyGroups()
   groups.value = res.data || []
   if (groups.value.length) form.group = groups.value[0]
 
-  if (route.params.id) {
-    isEdit.value = true
-    const detailRes = await fetchStrategyDetail(route.params.id)
-    if (detailRes && detailRes.data) {
-      const data = detailRes.data
-      form.name = data.name || ''
-      if (data.conditions && typeof data.conditions === 'string') {
-        try {
-          const cond = JSON.parse(data.conditions)
-          if (cond.group) form.group = cond.group
-          // 兼容 time_range（新格式）和 startTime/endTime（旧格式）
-          if (cond.time_range && typeof cond.time_range === 'string') {
-            const parts = cond.time_range.split('-')
-            if (parts.length === 2) {
-              form.startTime = parts[0]
-              form.endTime = parts[1]
-            }
-          } else {
-            if (cond.startTime) form.startTime = cond.startTime
-            if (cond.endTime) form.endTime = cond.endTime
-          }
-          if (cond.extraActions) {
-            form.actions.voiceAlert = !!cond.extraActions.voiceAlert
-            form.actions.voiceContent = cond.extraActions.voiceContent || ''
-            form.actions.capturePhoto = !!cond.extraActions.capturePhoto
-            form.actions.nightVision = !!cond.extraActions.nightVision
-            form.actions.generateAlert = !!cond.extraActions.generateAlert
-            if (cond.extraActions.alertType) form.actions.alertType = cond.extraActions.alertType
-            if (cond.extraActions.alertLevel) form.actions.alertLevel = cond.extraActions.alertLevel
-            form.actions.alertContent = cond.extraActions.alertContent || ''
-          }
+  // 重置表单
+  if (!route.params.id) {
+    isEdit.value = false
+    form.name = ''
+    form.startTime = ''
+    form.endTime = ''
+    form.actions = {
+      controlEnabled: true, brightness: 30,
+      voiceAlert: false, voiceContent: '', capturePhoto: false, nightVision: false,
+      generateAlert: false, alertType: 'POLICY_ALERT', alertLevel: 'WARNING', alertContent: '',
+    }
+    conditionItems.value = [
+      { id: nextId++, key: 'lux_lt', label: '环境光照度低于阈值', desc: '当光传感器读数跌至阈值以下时触发。', value: 30, unit: 'Lux', enabled: true },
+      { id: nextId++, key: 'traffic_lt', label: '人车流量阈值（雷达感知）', desc: '区域内5分钟平均流量低于设定值。', value: 10, unit: '次/5min', enabled: false },
+    ]
+    return
+  }
 
-          // 解析条件：兼容新格式 (lux_lt: 30) 和旧嵌套格式 (illuminance: {enabled, threshold})
-          const items = []
-          const metaKeys = ['group', 'startTime', 'endTime', 'time_range', 'extraActions']
-          for (const [key, val] of Object.entries(cond)) {
-            if (metaKeys.includes(key)) continue
-            if (typeof val === 'number' || typeof val === 'string') {
-              const def = AVAILABLE_CONDITIONS.find(c => c.key === key)
-              items.push({
-                id: nextId++,
-                key,
-                label: def ? def.label : key,
-                desc: def ? def.desc : '',
-                value: Number(val),
-                unit: def ? def.unit : '',
-                enabled: true,
-                isBoolean: def ? def.isBoolean || false : false,
-              })
-            } else if (val && typeof val === 'object' && val.enabled) {
-              const mapped = mapOldCondition(key, val)
-              if (mapped) items.push({ id: nextId++, ...mapped })
-            }
+  isEdit.value = true
+  const detailRes = await fetchStrategyDetail(route.params.id)
+  if (detailRes && detailRes.data) {
+    const data = detailRes.data
+    form.name = data.name || ''
+    if (data.conditions && typeof data.conditions === 'string') {
+      try {
+        const cond = JSON.parse(data.conditions)
+        if (cond.group) form.group = cond.group
+        // 兼容 time_range（新格式）和 startTime/endTime（旧格式）
+        if (cond.time_range && typeof cond.time_range === 'string') {
+          const parts = cond.time_range.split('-')
+          if (parts.length === 2) {
+            form.startTime = parts[0]
+            form.endTime = parts[1]
           }
-          if (items.length > 0) conditionItems.value = items
-        } catch(e) {}
-      }
+        } else {
+          if (cond.startTime) form.startTime = cond.startTime
+          if (cond.endTime) form.endTime = cond.endTime
+        }
+        if (cond.extraActions) {
+          form.actions.voiceAlert = !!cond.extraActions.voiceAlert
+          form.actions.voiceContent = cond.extraActions.voiceContent || ''
+          form.actions.capturePhoto = !!cond.extraActions.capturePhoto
+          form.actions.nightVision = !!cond.extraActions.nightVision
+          form.actions.generateAlert = !!cond.extraActions.generateAlert
+          if (cond.extraActions.alertType) form.actions.alertType = cond.extraActions.alertType
+          if (cond.extraActions.alertLevel) form.actions.alertLevel = cond.extraActions.alertLevel
+          form.actions.alertContent = cond.extraActions.alertContent || ''
+        }
 
-      if (data.action === 'NOTIFY') {
-        form.actions.controlEnabled = false
-      } else if (data.action === 'ON') {
-        form.actions.brightness = 100
-      } else if (data.action === 'OFF') {
-        form.actions.brightness = 0
-      } else if (data.action && data.action.startsWith('DIMMING(')) {
-        const val = parseInt(data.action.replace('DIMMING(', '').replace(')', ''))
-        if (!isNaN(val)) form.actions.brightness = val
-      }
+        // 解析条件：兼容新格式 (lux_lt: 30) 和旧嵌套格式 (illuminance: {enabled, threshold})
+        const items = []
+        const metaKeys = ['group', 'startTime', 'endTime', 'time_range', 'extraActions']
+        for (const [key, val] of Object.entries(cond)) {
+          if (metaKeys.includes(key)) continue
+          if (typeof val === 'number' || typeof val === 'string') {
+            const def = AVAILABLE_CONDITIONS.find(c => c.key === key)
+            items.push({
+              id: nextId++,
+              key,
+              label: def ? def.label : key,
+              desc: def ? def.desc : '',
+              value: Number(val),
+              unit: def ? def.unit : '',
+              enabled: true,
+              isBoolean: def ? def.isBoolean || false : false,
+            })
+          } else if (val && typeof val === 'object' && val.enabled) {
+            const mapped = mapOldCondition(key, val)
+            if (mapped) items.push({ id: nextId++, ...mapped })
+          }
+        }
+        if (items.length > 0) conditionItems.value = items
+      } catch(e) {}
+    }
+
+    if (data.action === 'NOTIFY') {
+      form.actions.controlEnabled = false
+    } else if (data.action === 'ON') {
+      form.actions.brightness = 100
+    } else if (data.action === 'OFF') {
+      form.actions.brightness = 0
+    } else if (data.action && data.action.startsWith('DIMMING(')) {
+      const val = parseInt(data.action.replace('DIMMING(', '').replace(')', ''))
+      if (!isNaN(val)) form.actions.brightness = val
     }
   }
-})
+}
+
+onMounted(loadPolicyData)
+onActivated(loadPolicyData)
+watch(() => route.params.id, () => { if (route.params.id) loadPolicyData() })
 
 async function saveStrategy() {
   if (!form.name.trim()) return alert('请输入策略名称')

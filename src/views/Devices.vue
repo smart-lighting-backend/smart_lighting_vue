@@ -150,7 +150,7 @@ useAutoRefresh(async () => {
     devices.value = raw
   } catch {}
 }, {
-  interval: 300000,
+  interval: 60000,
   isSensitive: () => createDialogVisible.value || deletingDeviceId.value || togglingDeviceId.value || areaBindingDialogVisible.value || areaUnbindingDeviceId.value || batchOperating.value,
 })
 

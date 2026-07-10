@@ -16,6 +16,18 @@
  */
 import request from './request.js'
 import { reportMock } from '../utils/mockStore.js'
+import { setControlState } from '../utils/controlStateStore.js'
+
+// 跨标签页广播控制状态（BroadcastChannel 替代 MQTT 实时同步）
+const ctrlChannel = (() => {
+  try { return new BroadcastChannel('smart-light-control') } catch (_) { return null }
+})()
+function broadcastControlState(deviceId, action, brightness) {
+  setControlState(deviceId, action, brightness)
+  if (ctrlChannel) {
+    ctrlChannel.postMessage({ deviceId, action, brightness })
+  }
+}
 
 // ── 常量定义 ─────────────────────────────────────────────────────────────
 const ACTION_MAP = { turn_on: 'ON', turn_off: 'OFF', dim: 'DIMMING' }
@@ -117,6 +129,7 @@ export async function sendControlCommand(deviceId, command, params = {}) {
   // flash / restart 后端不支持，走纯 Mock
   if (command === 'flash' || command === 'restart') {
     const result = buildMockResponse(deviceId, command, params)
+    // flash/restart 不影响灯光状态，跳过 controlStateStore 更新
     MOCK_HISTORY.unshift({
       id: `CTL${pad3(mockIdCounter++)}`,
       device_id: deviceId,
@@ -132,9 +145,11 @@ export async function sendControlCommand(deviceId, command, params = {}) {
     return result
   }
 
-  return safeCall(
+  const action = ACTION_MAP[command]
+  const brightness = params.brightness ?? (command === 'turn_off' ? 0 : 100)
+
+  const result = await safeCall(
     async () => {
-      const action = ACTION_MAP[command]
       if (!action) return { code: 400, message: '未知指令', data: null }
 
       const body = { action }
@@ -170,6 +185,13 @@ export async function sendControlCommand(deviceId, command, params = {}) {
     buildMockResponse(deviceId, command, params),
     `POST /api/devices/${deviceId}/control`,
   )
+
+  // 无论 API 成功还是 Mock 降级，都更新全局灯光状态缓存并广播到其他标签页
+  if (result?.code === 200 && action) {
+    broadcastControlState(deviceId, action, brightness)
+  }
+
+  return result
 }
 
 // ── 查询控制历史 ────────────────────────────────────────────────────────
