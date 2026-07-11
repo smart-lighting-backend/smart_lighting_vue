@@ -60,11 +60,11 @@ async function handlePopupControl(action, brightness) {
     setControlState(did, action, bVal)
     // 立即更新 3D 视觉
     setDeviceLight3D?.(did, bVal)
-    // 拉取最新数据并全量重建设备（确保 3D 与后端正确定同步）
-    if (syncDevices3D) {
+    // 拉取最新数据并全量重建设备（确保 3D 与后端一致）
+    if (rebuildScene3D) {
       const list = await fetchAllDevicesForMap()
       const devs = Array.isArray(list) ? list : (list?.data || list?.records || [])
-      if (devs.length > 0) { allDevices.value = devs; syncDevices3D(devs) }
+      if (devs.length > 0) { allDevices.value = devs; rebuildScene3D(devs) }
     }
     ElMessage.success(action === 'ON' ? '已开灯' : action === 'OFF' ? '已关灯' : `亮度已调至 ${brightness}%`)
   } catch (e) { console.error('[popup] control error:', e) }
@@ -150,6 +150,7 @@ const threeContainer = ref(null)
 let threeDispose = null
 const threeDeviceStats = ref({ count: 0, online: 0, alarm: 0 })  // 3D 场景设备统计
 let syncDevices3D = null  // 外部可调用的设备同步函数
+let rebuildScene3D = null  // 外部可调用的全量重建设备函数
 let flyToArea3D = null     // 外部可调用的相机飞行函数
 let highlight3D = null     // 外部可调用的设备高亮函数
 let highlightArea3D = null // 外部可调用的区域高亮函数
@@ -957,6 +958,10 @@ function initThreeScene() {
   syncDevices3D = (devs) => {
     syncDevices(devs)
   }
+  // 全量重建设备（控制指令后使用）
+  rebuildScene3D = (devs) => {
+    layoutDevices(devs)
+  }
 
   // Scene self-loads devices (full rebuild)
   fetchAllDevicesForMap().then(raw => {
@@ -1152,6 +1157,7 @@ function initThreeScene() {
     areaPlatforms.forEach(p => { p.geometry.dispose(); p.material.dispose() })
     areaPlatforms.length = 0
     syncDevices3D = null
+    rebuildScene3D = null
     flyToArea3D = null
     highlight3D = null
     highlightArea3D = null
