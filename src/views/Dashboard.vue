@@ -12,8 +12,7 @@ import { useCountUp } from '../composables/useCountUp.js'
 import { useAutoRefresh } from '../composables/useAutoRefresh.js'
 import { withCache, invalidateCache } from '../utils/requestCache.js'
 import { parseLatestData } from '../utils/manualControlState.js'
-import { clearControlState } from '../utils/controlStateStore.js'
-import { useControlSync } from '../composables/useControlSync.js'
+import { getControlState, setControlState } from '../utils/controlStateStore.js'
 import DeviceMap from '../components/DeviceMap.vue'
 
 const router = useRouter()
@@ -53,23 +52,20 @@ async function handlePopupControl(action, brightness) {
   controlLoading.value = true
   try {
     await controlDevice(did, { action, brightness })
-    // Clear stale cache entry — we read fresh API data directly
-    clearControlState(did)
-    // Fetch fresh device data and update only the target device in 3D
-    const list = await fetchAllDevicesForMap()
-    const devs = Array.isArray(list) ? list : (list?.data || list?.records || [])
-    if (devs.length > 0) allDevices.value = devs
-    const freshDevice = devs.find(d => d.deviceId === did)
-    const bVal = action === 'OFF' ? 0 : (brightness != null ? brightness : 100)
-    if (freshDevice) {
-      replaceSingleDevice(did, bVal, freshDevice)
-    } else {
-      replaceSingleDevice(did, bVal)
-    }
-    // Update popup brightness
+    const bVal = action === 'OFF' ? 0 : (brightness || 100)
+    // 先更新弹窗显示
     if (action === 'ON') popupDevice.value._brightness = 100
     else if (action === 'OFF') popupDevice.value._brightness = 0
     else if (action === 'DIMMING') popupDevice.value._brightness = brightness
+    // 写入控制状态缓存
+    setControlState(did, action, bVal)
+    // 拉取全量数据并全量重建设备
+    const list = await fetchAllDevicesForMap()
+    const devs = Array.isArray(list) ? list : (list?.data || list?.records || [])
+    if (devs.length > 0) {
+      allDevices.value = devs
+      if (rebuildScene3D) rebuildScene3D(devs)
+    }
     ElMessage.success(action === 'ON' ? '已开灯' : action === 'OFF' ? '已关灯' : `亮度已调至 ${brightness}%`)
   } catch (e) { console.error('[popup] control error:', e) }
   finally { controlLoading.value = false }
@@ -159,7 +155,6 @@ let flyToArea3D = null     // 外部可调用的相机飞行函数
 let highlight3D = null     // 外部可调用的设备高亮函数
 let highlightArea3D = null // 外部可调用的区域高亮函数
 let setDeviceLight3D = null // 外部可调用的设备亮度函数
-let refreshSingleDevice3D = null // 跨标签页刷新单个设备3D状态
 
 // ═══ 数据加载 ═══
 async function loadAllData() {
@@ -960,7 +955,6 @@ function initThreeScene() {
     if (viewMode.value === '3d') renderer.render(scene, camera)
   }
   setDeviceLight3D = (deviceId, brightness) => { replaceSingleDevice(deviceId, brightness) }
-  refreshSingleDevice3D = (deviceId, brightness, deviceData) => { replaceSingleDevice(deviceId, brightness, deviceData) }
 
   // Area highlight: dim non-selected areas, boost selected area
   function applyAreaHighlight(areaName) {
@@ -1219,7 +1213,6 @@ function initThreeScene() {
     highlight3D = null
     highlightArea3D = null
     setDeviceLight3D = null
-    refreshSingleDevice3D = null
     if (highlightRing) { highlightRing.geometry.dispose(); highlightRing.material.dispose(); highlightRing = null }
     if (container.contains(renderer.domElement)) {
       container.removeChild(renderer.domElement)
@@ -1351,23 +1344,6 @@ onUnmounted(() => {
   energyChart?.dispose()
   donutChart?.dispose()
   barChart?.dispose()
-})
-
-// ═══ 跨标签页/跨组件控制同步 ═══
-const { onControlChange } = useControlSync()
-onControlChange(async (deviceId) => {
-  try {
-    const list = await fetchAllDevicesForMap()
-    const devs = Array.isArray(list) ? list : (list?.data || list?.records || [])
-    if (devs.length > 0) allDevices.value = devs
-    const freshDevice = devs.find(d => d.deviceId === deviceId)
-    if (freshDevice && refreshSingleDevice3D) {
-      const data = parseLatestData(freshDevice.latestData)
-      const bVal = data?.brightness != null ? data.brightness : 100
-      clearControlState(deviceId)
-      refreshSingleDevice3D(deviceId, bVal, freshDevice)
-    }
-  } catch (_) { /* silent */ }
 })
 
 // ═══ 视图切换 ═══
