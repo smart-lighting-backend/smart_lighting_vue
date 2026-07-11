@@ -177,6 +177,7 @@ let highlight3D = null     // 外部可调用的设备高亮函数
 let highlightArea3D = null // 外部可调用的区域高亮函数
 let setDeviceLight3D = null // 外部可调用的设备亮度函数
 let applyDeviceBrightness3D = null // 外部可调用的设备亮度增量更新（不重建mesh）
+let flyToOverview3D = null          // 外部可调用的俯瞰视角
 let initialMountDone = false       // 首次挂载是否完成（防止 onActivated 竞态）
 
 // ═══ 跨标签页控制同步 ═══
@@ -367,7 +368,7 @@ function initThreeScene(preloadedDevices) {
   // Scene
   const scene = new THREE.Scene()
   scene.background = new THREE.Color(0x0a1628)
-  scene.fog = new THREE.Fog(0x0a1628, 16, 60)
+  scene.fog = new THREE.Fog(0x0a1628, 40, 130)
 
   // Camera
   const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100)
@@ -389,7 +390,7 @@ function initThreeScene(preloadedDevices) {
   controls.autoRotate = true
   controls.autoRotateSpeed = 0.5
   controls.minDistance = 5
-  controls.maxDistance = 35
+  controls.maxDistance = 100
   controls.maxPolarAngle = Math.PI / 2.2
   controls.target.set(0, 0, 0)
 
@@ -506,7 +507,7 @@ function initThreeScene(preloadedDevices) {
 
     // PointLight — driven by lightState
     const ptColor = lightState === 'alarm' ? 0xef5350 : lightState === 'on' ? 0xfff8e7 : 0x000000
-    const ptLight = new THREE.PointLight(ptColor, lightState === 'off' ? 0 : 4, 7, 0.5)
+    const ptLight = new THREE.PointLight(ptColor, lightState === 'off' ? 0 : 8, 14, 0.5)
     ptLight.position.copy(bulb.position)
     ptLight.name = 'ptLight'
     group.add(ptLight)
@@ -517,7 +518,7 @@ function initThreeScene(preloadedDevices) {
     const diskMat = new THREE.MeshBasicMaterial({ color: diskColor, transparent: true, opacity: bulbCfg.diskOpacity, depthWrite: false })
     const disk = new THREE.Mesh(diskGeo, diskMat)
     disk.rotation.x = -Math.PI / 2
-    disk.position.y = 0.005
+    disk.position.y = 0.04
     disk.name = 'lightDisk'
     group.add(disk)
 
@@ -543,6 +544,7 @@ function initThreeScene(preloadedDevices) {
   const areaPlatformMap = new Map()
   let connectionLines = []
   let areaMarkerRings = []
+  let blockObjects = []   // 城市布局元素（道路、建筑、标线）
   // Camera fly-to state
   let flyTarget = null
   let flyStartPos = null
@@ -552,7 +554,7 @@ function initThreeScene(preloadedDevices) {
 
   const STATUS_3D  = { 1: 0x4dd0e1, 2: 0x708090, 3: 0xef5350, 0: 0x404050 }  // hex base
   const RING_3D    = { 1: 0x4dd0e1, 2: 0xff4444, 3: 0xef5350, 0: 0x404050 }  // bottom ring: offline=RED
-  const BULB_ON    = { color: 0xffffff, emissive: 8, diskOpacity: 0.18 }        // light ON
+  const BULB_ON    = { color: 0xffffff, emissive: 12, diskOpacity: 0.45 }       // light ON (增强俯瞰可见度)
   const BULB_OFF   = { color: 0x111111, emissive: 0, diskOpacity: 0 }           // light OFF
   const BULB_ALARM = { color: 0xef5350, emissive: 2.5, diskOpacity: 0.22 }      // alarm
 
@@ -595,7 +597,7 @@ function initThreeScene(preloadedDevices) {
       entry.bulb.material.emissiveIntensity = bulbCfg.emissive
     }
     const ptCol = ls === 'alarm' ? 0xef5350 : ls === 'on' ? 0xfff8e7 : 0x000000
-    if (entry.ptLight) { entry.ptLight.color.setHex(ptCol); entry.ptLight.intensity = ls === 'off' ? 0 : 4 }
+    if (entry.ptLight) { entry.ptLight.color.setHex(ptCol); entry.ptLight.intensity = ls === 'off' ? 0 : 8 }
     const dkCol = ls === 'alarm' ? 0xef5350 : ls === 'on' ? 0xfff8e7 : 0x000000
     if (entry.disk) { entry.disk.material.color.setHex(dkCol); entry.disk.material.opacity = bulbCfg.diskOpacity }
 
@@ -704,26 +706,51 @@ function initThreeScene(preloadedDevices) {
   }
 
   // ══════════════════════════════════════════════════════════════
-  // Layout: area-grouped clustering
+  // Layout: 城市街道布局（网格化街区）
   // ══════════════════════════════════════════════════════════════
+  function disposeObj(obj) {
+    scene.remove(obj)
+    if (obj.geometry) obj.geometry.dispose()
+    if (obj.material) {
+      if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose())
+      else obj.material.dispose()
+    }
+  }
+
   function layoutDevices(devices) {
     if (layoutLock) { console.log('[3D] layoutDevices skipped (locked)'); return }
     layoutLock = true
     console.log('[3D] layoutDevices start:', devices?.length, 'devices, deviceObjectMap:', deviceObjectMap.size)
-    // Dispose old
-    deviceObjectMap.forEach(entry => {
-      scene.remove(entry.group)
-      entry.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) { if (Array.isArray(c.material)) c.material.forEach(m => m.dispose()); else c.material.dispose() } })
-    })
+
+    // ── 销毁旧对象 ──
+    deviceObjectMap.forEach(entry => { scene.remove(entry.group); entry.group.traverse(c => disposeObj(c)) })
     deviceObjectMap.clear()
     areaGroups.clear()
-    // Reset highlight ring (devices are being recreated)
     if (highlightRing) { scene.remove(highlightRing); highlightRing.geometry.dispose(); highlightRing.material.dispose(); highlightRing = null }
-    clearConnections()
-    updateAreaMarkers()
+    blockObjects.forEach(obj => disposeObj(obj))
+    blockObjects = []
+    connectionLines.forEach(l => { l.geometry.dispose(); scene.remove(l) })
+    connectionLines = []
+    areaMarkerRings.forEach(r => disposeObj(r))
+    areaMarkerRings = []
+    areaLabelSprites.forEach(s => { scene.remove(s); if (s.material?.map) s.material.map.dispose(); s.material.dispose() })
+    areaLabelSprites.length = 0
+    areaPlatforms.forEach(p => disposeObj(p))
+    areaPlatforms.length = 0
+    areaPlatformMap.clear()
+
     if (!devices || devices.length === 0) { layoutLock = false; return }
 
-    // Group by area
+    // ── 材料预分配 ──
+    const roadMat = new THREE.MeshStandardMaterial({ color: 0x333840, roughness: 0.85, metalness: 0.1 })
+    const sidewalkMat = new THREE.MeshStandardMaterial({ color: 0x3a3e46, roughness: 0.7, metalness: 0.05 })
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x151d28, roughness: 0.9, metalness: 0.1 })
+    const buildMatDark = new THREE.MeshStandardMaterial({ color: 0x1e2a36, roughness: 0.35, metalness: 0.4, emissive: 0x060a10, emissiveIntensity: 0.25 })
+    const buildMatLit = new THREE.MeshStandardMaterial({ color: 0x253242, roughness: 0.35, metalness: 0.4, emissive: 0x0c1520, emissiveIntensity: 0.45 })
+    const dashMat = new THREE.MeshBasicMaterial({ color: 0x8899aa, transparent: true, opacity: 0.5, depthWrite: false })
+    const interMat = new THREE.MeshBasicMaterial({ color: 0x4dd0e1, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide })
+
+    // ── 分组 ──
     const areaMap = new Map()
     devices.forEach(d => {
       const area = d.area || '默认区域'
@@ -731,54 +758,145 @@ function initThreeScene(preloadedDevices) {
       areaMap.get(area).push(d)
     })
 
-    const areaNames = [...areaMap.keys()]
-    const areaCount = areaNames.length
-    const layoutRadius = areaCount <= 1 ? 0 : 9
+    // 获取所有区域名（包含空区域）
+    const allAreaNames = [...new Set([...areaMap.keys()])].sort()
+    const areaCount = allAreaNames.length
+    const COLS = Math.max(2, Math.ceil(Math.sqrt(areaCount * 1.4)))
+    const BLOCK = 22    // 街区中心距
+    const CELL = 17     // 街区内可用尺寸
+    const ROAD_W = 2.4  // 道路宽度
+    const BLDG_D = 1.0  // 建筑厚度
+    const SW = 0.4      // 人行道宽度
 
-    areaNames.forEach((areaName, areaIdx) => {
-      const areaDevices = areaMap.get(areaName)
-      const angle = (areaIdx / areaCount) * Math.PI * 2 - Math.PI / 2
-      const cx = Math.cos(angle) * layoutRadius
-      const cz = Math.sin(angle) * layoutRadius
+    const roadGeo = new THREE.PlaneGeometry(ROAD_W, CELL - 1.5)
+    const swGeo = new THREE.PlaneGeometry(SW, CELL - 1.5)
+    const groundGeo = new THREE.PlaneGeometry(CELL, CELL)
+
+    function simpleHash(str) { let h = 0; for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0; return Math.abs(h) }
+
+    allAreaNames.forEach((areaName, idx) => {
+      const row = Math.floor(idx / COLS)
+      const col = idx % COLS
+      const cx = (col - (COLS - 1) / 2) * BLOCK
+      const cz = (row - (Math.max(0, areaCount - 1) / COLS / 2)) * BLOCK
+
+      const areaDevices = areaMap.get(areaName) || []
       const n = areaDevices.length
-      const subR = n <= 1 ? 0 : Math.max(1.8, n * 0.45)
-      areaGroups.set(areaName, { center: { x: cx, z: cz }, deviceIds: areaDevices.map(d => d.deviceId), platformRadius: subR + 0.8, areaIndex: areaIdx })
 
-      areaDevices.forEach((d, i) => {
-        const subAngle = (i / Math.max(n, 1)) * Math.PI * 2
-        const x = cx + Math.cos(subAngle) * subR
-        const z = cz + Math.sin(subAngle) * subR
+      // ── 地面 ──
+      const ground = new THREE.Mesh(groundGeo, groundMat)
+      ground.rotation.x = -Math.PI / 2; ground.position.set(cx, 0.01, cz)
+      ground.receiveShadow = true; ground.userData = { areaName, isPlatform: true }
+      scene.add(ground); areaPlatforms.push(ground); areaPlatformMap.set(areaName, ground); blockObjects.push(ground)
 
-        const s = d.status != null ? d.status : 2
-        const ls = getLightState(d)
-        const baseColor = STATUS_3D[s] || 0x4a5a6a
-        const ringColor = RING_3D[s] || 0x4a5a6a
-        const group = createStreetlight(baseColor, ringColor, s, ls)
-        group.position.set(x, 0, z)
-        group.userData = { deviceId: d.deviceId, deviceName: d.name, area: areaName, status: s, lightState: ls }
-        scene.add(group)
-        deviceObjectMap.set(d.deviceId, {
-          group,
-          base: group.children.find(c => c.name === 'hexBase'),
-          baseGlow: group.children.find(c => c.name === 'baseGlow'),
-          bulb: group.children.find(c => c.name === 'bulb'),
-          ptLight: group.children.find(c => c.name === 'ptLight'),
-          disk: group.children.find(c => c.name === 'lightDisk'),
-          beam: group.children.find(c => c.name === 'beam'),
+      // ── 道路 ──
+      const road = new THREE.Mesh(roadGeo, roadMat)
+      road.rotation.x = -Math.PI / 2; road.position.set(cx, 0.025, cz)
+      road.receiveShadow = true
+      scene.add(road); blockObjects.push(road)
+
+      // ── 人行道 ──
+      for (let s = -1; s <= 1; s += 2) {
+        const swMesh = new THREE.Mesh(swGeo, sidewalkMat)
+        swMesh.rotation.x = -Math.PI / 2; swMesh.position.set(cx + s * (ROAD_W / 2 + SW / 2), 0.02, cz)
+        swMesh.receiveShadow = true
+        scene.add(swMesh); blockObjects.push(swMesh)
+      }
+
+      // ── 虚线标线 ──
+      for (let dz = -CELL / 2 + 1.5; dz < CELL / 2; dz += 1.8) {
+        const dGeo = new THREE.PlaneGeometry(0.07, 0.7)
+        const dash = new THREE.Mesh(dGeo, dashMat)
+        dash.rotation.x = -Math.PI / 2; dash.position.set(cx, 0.031, cz + dz)
+        scene.add(dash); blockObjects.push(dash)
+      }
+
+      // ── 建筑 ──
+      const buildCount = Math.max(4, Math.min(14, n * 2 + 2))
+      const buildSpacing = (CELL - 2.5) / buildCount
+      const buildMat = n > 0 ? buildMatLit : buildMatDark
+
+      for (let s = -1; s <= 1; s += 2) {
+        const bx = cx + s * (ROAD_W / 2 + SW + BLDG_D / 2)
+        for (let b = 0; b < buildCount; b++) {
+          const bz = cz - CELL / 2 + 1.5 + b * buildSpacing
+          const seed = simpleHash(areaName + s + b)
+          const bw = buildSpacing * (0.55 + (seed % 40) / 100)
+          const bh = 2.0 + (seed % 70) / 100 * 5.0
+          const bGeo = new THREE.BoxGeometry(BLDG_D, bh, bw)
+          const bldg = new THREE.Mesh(bGeo, buildMat)
+          bldg.position.set(bx, bh / 2, bz)
+          bldg.castShadow = true; bldg.receiveShadow = true
+          scene.add(bldg); blockObjects.push(bldg)
+        }
+      }
+
+      // ── 路灯 ──
+      if (n > 0) {
+        const lightSpacing = Math.max(2.2, (CELL - 2.5) / Math.max(1, n))
+        const startZ = cz - (n - 1) * lightSpacing / 2
+        areaDevices.forEach((d, i) => {
+          const side = i % 2 === 0 ? 1 : -1
+          const lx = cx + side * (ROAD_W / 2 + 0.12)
+          const lz = startZ + i * lightSpacing
+          const s = d.status != null ? d.status : 2
+          const ls = getLightState(d)
+          const baseColor = STATUS_3D[s] || 0x4a5a6a
+          const ringColor = RING_3D[s] || 0x4a5a6a
+          const group = createStreetlight(baseColor, ringColor, s, ls)
+          group.position.set(lx, 0, lz)
+          group.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2
+          group.userData = { deviceId: d.deviceId, deviceName: d.name, area: areaName, status: s, lightState: ls }
+          scene.add(group)
+          deviceObjectMap.set(d.deviceId, {
+            group,
+            base: group.children.find(c => c.name === 'hexBase'),
+            baseGlow: group.children.find(c => c.name === 'baseGlow'),
+            bulb: group.children.find(c => c.name === 'bulb'),
+            ptLight: group.children.find(c => c.name === 'ptLight'),
+            disk: group.children.find(c => c.name === 'lightDisk'),
+            beam: group.children.find(c => c.name === 'beam'),
+          })
         })
+      }
+
+      // ── 路牌（悬浮在道路中央上方）──
+      const label = makeTextSprite(areaName)
+      label.position.set(cx, 1.6, cz)
+      label.scale.set(5.5, 1.4, 1)
+      scene.add(label); areaLabelSprites.push(label)
+
+      // ── 路口标记 ──
+      const interGeo = new THREE.CircleGeometry(0.45, 16)
+      const inter = new THREE.Mesh(interGeo, interMat)
+      inter.rotation.x = -Math.PI / 2; inter.position.set(cx, 0.035, cz)
+      inter.userData = { areaName, isIntersection: true }
+      scene.add(inter); areaMarkerRings.push(inter); blockObjects.push(inter)
+
+      areaGroups.set(areaName, {
+        center: { x: cx, z: cz },
+        deviceIds: areaDevices.map(d => d.deviceId),
+        platformRadius: CELL / 2,
+        areaIndex: idx,
       })
     })
 
-    drawConnections()
-    updateAreaMarkers()
     threeDeviceStats.value = {
       count: devices.length,
       online: devices.filter(d => d.status === 1).length,
       alarm: devices.filter(d => d.status === 3).length,
     }
-    // Re-apply area highlight after rebuild
     if (selectedArea.value) { applyAreaHighlight(selectedArea.value) }
     console.log('[3D] layoutDevices done, deviceObjectMap:', deviceObjectMap.size, 'areaGroups:', areaGroups.size)
+
+    // 自适应相机：覆盖整个城市
+    const gridW = COLS * BLOCK
+    const gridD = Math.ceil(areaCount / COLS) * BLOCK
+    const viewDist = Math.max(gridW, gridD, 20) * 0.55
+    camera.position.set(viewDist * 0.5, viewDist * 0.7, viewDist * 0.7)
+    controls.target.set(0, 0, 0)
+    controls.update()
+
     layoutLock = false
   }
 
@@ -843,9 +961,9 @@ function initThreeScene(preloadedDevices) {
         if ((ls === 'off' && isCustomOff) || (ls === 'on' && !isCustomOff)) {
           // 状态一致：仅微调亮度强度
           const factor = b / 100
-          if (entry.ptLight) entry.ptLight.intensity = isCustomOff ? 0 : 4 * factor
-          if (entry.disk) entry.disk.material.opacity = isCustomOff ? 0 : 0.18 * factor
-          if (entry.bulb) entry.bulb.material.emissiveIntensity = isCustomOff ? 0 : 8 * factor
+          if (entry.ptLight) entry.ptLight.intensity = isCustomOff ? 0 : 8 * factor
+          if (entry.disk) entry.disk.material.opacity = isCustomOff ? 0 : 0.45 * factor
+          if (entry.bulb) entry.bulb.material.emissiveIntensity = isCustomOff ? 0 : 12 * factor
           if (entry.base) { entry.base.material.emissiveIntensity = isCustomOff ? 0 : 1.0; entry.base.material.opacity = isCustomOff ? 0.25 : 1.0 }
           if (entry.baseGlow) { entry.baseGlow.material.opacity = isCustomOff ? 0 : 0.6 }
         } else {
@@ -940,9 +1058,9 @@ function initThreeScene(preloadedDevices) {
     applyLightState(entry, isOff ? 'off' : 'on')
     // Scale pointlight/disk/bulb by brightness
     const factor = pct / 100
-    if (entry.ptLight) { entry.ptLight.intensity = isOff ? 0 : 4 * factor }
-    if (entry.disk) { entry.disk.material.opacity = isOff ? 0 : 0.18 * factor }
-    if (entry.bulb) { entry.bulb.material.emissiveIntensity = isOff ? 0 : 8 * factor }
+    if (entry.ptLight) { entry.ptLight.intensity = isOff ? 0 : 8 * factor }
+    if (entry.disk) { entry.disk.material.opacity = isOff ? 0 : 0.45 * factor }
+    if (entry.bulb) { entry.bulb.material.emissiveIntensity = isOff ? 0 : 12 * factor }
     // Also dim base hex when off (user-visible feedback)
     if (entry.base) {
       entry.base.material.emissiveIntensity = isOff ? 0 : 1.0
@@ -1016,9 +1134,9 @@ function initThreeScene(preloadedDevices) {
       if (newEntry.ptLight) newEntry.ptLight.intensity = 0
     } else if (brightness != null && brightness >= 0 && brightness < 100) {
       const factor = brightness / 100
-      if (newEntry.ptLight) newEntry.ptLight.intensity = 4 * factor
-      if (newEntry.disk) newEntry.disk.material.opacity = 0.18 * factor
-      if (newEntry.bulb) newEntry.bulb.material.emissiveIntensity = 8 * factor
+      if (newEntry.ptLight) newEntry.ptLight.intensity = 8 * factor
+      if (newEntry.disk) newEntry.disk.material.opacity = 0.45 * factor
+      if (newEntry.bulb) newEntry.bulb.material.emissiveIntensity = 12 * factor
     }
     // Force immediate render
     if (viewMode.value === '3d') renderer.render(scene, camera)
@@ -1063,9 +1181,9 @@ function initThreeScene(preloadedDevices) {
           if (entry.baseGlow) { entry.baseGlow.material.opacity = isOff ? 0 : (areaName && isSelected ? 0.75 : 0.6) }
           if (!isOff && ls === 'on') {
             const factor = b / 100
-            if (entry.ptLight) entry.ptLight.intensity = 4 * factor
-            if (entry.disk) entry.disk.material.opacity = 0.18 * factor
-            if (entry.bulb) entry.bulb.material.emissiveIntensity = 8 * factor
+            if (entry.ptLight) entry.ptLight.intensity = 8 * factor
+            if (entry.disk) entry.disk.material.opacity = 0.45 * factor
+            if (entry.bulb) entry.bulb.material.emissiveIntensity = 12 * factor
           }
         }
       }
@@ -1094,6 +1212,12 @@ function initThreeScene(preloadedDevices) {
   // 全量重建设备（控制指令后使用）
   rebuildScene3D = (devs) => {
     layoutDevices(devs)
+  }
+  // 俯瞰视角：相机飞到城市正上方
+  flyToOverview3D = () => {
+    const gridW = areaGroups.size > 0 ? Math.ceil(Math.sqrt([...areaGroups.keys()].length * 1.4)) * 22 : 40
+    const h = Math.max(gridW * 0.65, 25)
+    startFly(new THREE.Vector3(0, h, h * 0.15), new THREE.Vector3(0, 0, 0))
   }
 
   // Scene self-loads devices: 有预加载数据则同步使用，否则异步拉取
@@ -1232,7 +1356,6 @@ function initThreeScene(preloadedDevices) {
     if (platIntersects.length > 0) {
       const areaName = platIntersects[0].object.userData?.areaName
       if (areaName) {
-        selectedArea.value = areaName
         flyToArea(areaName)
         dismissPopup()
         return
@@ -1325,6 +1448,7 @@ function initThreeScene(preloadedDevices) {
     highlightArea3D = null
     setDeviceLight3D = null
     applyDeviceBrightness3D = null
+    flyToOverview3D = null
     if (unsubControl) { unsubControl(); unsubControl = null }
     window.removeEventListener('manual-control-state-change', onManualStateChange)
     if (highlightRing) { highlightRing.geometry.dispose(); highlightRing.material.dispose(); highlightRing = null }
@@ -1640,6 +1764,11 @@ watch(selectedArea, (area) => {
             <div class="view-badge">
               <span class="view-badge-dot"></span>实时渲染
             </div>
+            <button class="view-tab overview-btn" @click="flyToOverview3D?.()" title="俯瞰全城">
+              <svg viewBox="0 0 24 24" fill="none" width="13" height="13">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+              </svg>
+            </button>
             <button class="view-tab immersive-btn" @click="toggleImmersive" :title="isImmersive ? '退出沉浸模式' : '沉浸模式'">
               <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
                 <path v-if="!isImmersive" d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
