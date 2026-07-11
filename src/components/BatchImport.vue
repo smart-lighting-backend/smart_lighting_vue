@@ -457,6 +457,7 @@ onUnmounted(() => {
                 <th>经度</th>
                 <th>纬度</th>
                 <th>功率(W)</th>
+                <th>出厂编号</th>
                 <th>问题</th>
               </tr>
             </thead>
@@ -464,7 +465,7 @@ onUnmounted(() => {
               <tr v-for="(row, index) in parsedRows" :key="index" :class="{ 'bi-row-err': !validationResults[index]?.valid }">
                 <td>{{ row._row }}</td>
                 <td
-                  v-for="field in ['deviceId','name','area','longitude','latitude','ratedPower']"
+                  v-for="field in ['deviceId','name','area','longitude','latitude','ratedPower','factorySerial']"
                   :key="field"
                   class="bi-cell-editable"
                   @click="startEdit(index, field)"

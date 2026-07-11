@@ -449,11 +449,9 @@ onUnmounted(() => {
 
       <main class="page-content">
         <RouterView v-slot="{ Component }">
-          <Transition name="fade-page" mode="out-in">
-            <KeepAlive :max="8">
-              <component :is="Component" />
-            </KeepAlive>
-          </Transition>
+          <KeepAlive :max="8">
+            <component :is="Component" />
+          </KeepAlive>
         </RouterView>
       </main>
     </div>

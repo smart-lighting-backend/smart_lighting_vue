@@ -35,6 +35,12 @@ const IMPORT_FIELDS = [
     defaultIndex: 5,
     aliases: ['额定功率(W)', '额定功率', '功率', 'ratedPower', 'rated_power', 'power'],
   },
+  {
+    key: 'factorySerial',
+    title: '出厂编号',
+    defaultIndex: 6,
+    aliases: ['出厂编号', '出厂编码', '序列号', 'factorySerial', 'factory_serial', 'serial'],
+  },
 ]
 
 const TEMPLATE_HEADERS = IMPORT_FIELDS.map(field => field.title)
@@ -45,7 +51,7 @@ const SUPPORTED_IMPORT_EXTENSIONS = new Set(['csv', 'xlsx'])
 export async function downloadTemplate() {
   const rows = [
     TEMPLATE_HEADERS,
-    ['SL_007', '北门-03', 'A区', '106.5622', '29.5621', '60'],
+    ['SL_007', '北门-03', 'A区', '106.5622', '29.5621', '60', 'MFG-202607001'],
   ]
   const data = await buildXlsxBlobData(rows)
   downloadBlob(
@@ -104,6 +110,10 @@ export function validateDeviceRow(row, existingDeviceIds = new Set()) {
     }
   }
 
+  if (!row.factorySerial || !String(row.factorySerial).trim()) {
+    errors.push('出厂编号不能为空')
+  }
+
   return { valid: errors.length === 0, errors }
 }
 
@@ -111,6 +121,7 @@ export function validateAllRows(rows, existingDeviceIds = new Set(), existingLoc
   const existingSet = new Set(existingDeviceIds)
   const seenDeviceIds = new Map()
   const seenLocations = new Map()
+  const seenSerials = new Map()
 
   return rows.map((row, index) => {
     const result = validateDeviceRow(row, existingSet)
@@ -139,6 +150,16 @@ export function validateAllRows(rows, existingDeviceIds = new Set(), existingLoc
       }
     }
 
+    // 出厂编号重复检测
+    const serial = row.factorySerial && String(row.factorySerial).trim()
+    if (serial) {
+      if (seenSerials.has(serial)) {
+        result.errors.unshift(`出厂编号 "${serial}" 与第 ${seenSerials.get(serial)} 行重复`)
+      } else {
+        seenSerials.set(serial, rowNum)
+      }
+    }
+
     result.valid = result.errors.length === 0
     return result
   })
@@ -154,6 +175,7 @@ export function rowsToPayload(rows) {
       area: row.area || undefined,
       location: (lng && lat) ? `${lng},${lat}` : undefined,
       ratedPower: row.ratedPower ? parseFloat(row.ratedPower) : undefined,
+      factorySerial: row.factorySerial || undefined,
       topicPrefix: 'streetlight',
     }
   })
@@ -240,7 +262,7 @@ function buildSheetXml(rows) {
   <cols>
     <col min="1" max="2" width="18" customWidth="1"/>
     <col min="3" max="3" width="16" customWidth="1"/>
-    <col min="4" max="6" width="14" customWidth="1"/>
+    <col min="4" max="7" width="14" customWidth="1"/>
   </cols>
   <sheetData>${sheetRows}</sheetData>
 </worksheet>`
@@ -379,6 +401,7 @@ function parseRows(rows) {
       longitude: roundCoord(rawLng),
       latitude: roundCoord(rawLat),
       ratedPower: getMappedValue(row, columnMap, 'ratedPower'),
+      factorySerial: getMappedValue(row, columnMap, 'factorySerial'),
       _row: i + 1,
     }
 

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, onActivated, nextTick, computed, watch } from 'vue'
 import { useAutoRefresh } from '../composables/useAutoRefresh.js'
 import { useMqtt } from '../composables/useMqtt.js'
 import { useRouter } from 'vue-router'
@@ -121,6 +121,7 @@ function buildCreateForm() {
     areaId: null,
     longitude: '',
     latitude: '',
+    factorySerial: '',
     status: 1,
     healthScore: 100,
     topicPrefix: 'streetlight',
@@ -164,6 +165,9 @@ onMounted(() => {
       devices.value = raw
     }).catch(() => {})
   })
+})
+onActivated(() => {
+  nextTick(() => loadDevices())
 })
 
 // 所选区域变化时同步 area 文本
@@ -285,6 +289,7 @@ function buildCreatePayload() {
     name: normalizeOptionalText(createForm.value.name),
     area: normalizeOptionalText(createForm.value.area),
     location,
+    factorySerial: normalizeOptionalText(createForm.value.factorySerial),
     status: enabled ? formStatus : 0,
     healthScore: createForm.value.healthScore === '' || createForm.value.healthScore === null
       ? undefined
@@ -1121,6 +1126,14 @@ async function batchDeleteSelected() {
           <ElSelect v-model="createForm.status" style="width: 100%">
             <ElOption v-for="option in createStatusOptions" :key="option.value" :label="option.label" :value="option.value" />
           </ElSelect>
+        </ElFormItem>
+        <ElFormItem label="出厂编号" prop="factorySerial">
+          <ElInput
+            v-model.trim="createForm.factorySerial"
+            placeholder="设备出厂编号（用于生成 MQTT 鉴权凭证）"
+            maxlength="100"
+            show-word-limit
+          />
         </ElFormItem>
       </ElForm>
       <template #footer>

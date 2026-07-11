@@ -737,6 +737,64 @@ onBeforeUnmount(() => {
  tempHumidityChartInstance = null;
  }
 });
+
+// ───────────── 设备凭证 ─────────────
+const credentialsVisible = ref(false)
+const credentialsData = ref(null)
+const credentialsLoading = ref(false)
+const credentialsError = ref('')
+
+// ───────────── 修改识别码 ─────────────
+const idCodeDialogVisible = ref(false)
+const newIdCode = ref('')
+const idCodeLoading = ref(false)
+
+function showIdCodeDialog() {
+  newIdCode.value = ''
+  idCodeDialogVisible.value = true
+}
+
+async function submitIdCode() {
+  if (!newIdCode.value.trim()) {
+    ElMessage.warning('请输入新识别码')
+    return
+  }
+  idCodeLoading.value = true
+  try {
+    const { default: http } = await import('../api/request.js')
+    const res = await http.put(`/api/devices/${deviceId.value}/id-code`, { idCode: newIdCode.value.trim() })
+    if (res.code === 200) {
+      ElMessage.success(`识别码已更新，新密码: ${res.data.newPassword}`)
+      idCodeDialogVisible.value = false
+    } else {
+      ElMessage.error(res.message || '修改失败')
+    }
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || e.message || '请求失败')
+  } finally {
+    idCodeLoading.value = false
+  }
+}
+
+async function showCredentials() {
+  credentialsVisible.value = true
+  credentialsLoading.value = true
+  credentialsError.value = ''
+  credentialsData.value = null
+  try {
+    const { default: http } = await import('../api/request.js')
+    const res = await http.get(`/api/devices/${deviceId.value}/credentials`)
+    if (res.code === 200) {
+      credentialsData.value = res.data
+    } else {
+      credentialsError.value = res.message || '获取凭证失败'
+    }
+  } catch (e) {
+    credentialsError.value = e?.response?.data?.message || e.message || '请求失败'
+  } finally {
+    credentialsLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -770,6 +828,12 @@ onBeforeUnmount(() => {
             </ElTag>
           </div>
           <div class="card-header-right">
+            <ElButton v-if="hasPerm('device:credential')" type="warning" size="small" text @click="showIdCodeDialog">
+              修改识别码
+            </ElButton>
+            <ElButton type="primary" size="small" text @click="showCredentials">
+              查看凭证
+            </ElButton>
             <span class="update-time">
               最后更新: {{ formatTime(deviceInfo?.lastHeartbeat) }}
             </span>
@@ -1129,6 +1193,35 @@ onBeforeUnmount(() => {
       </ElCard>
     </div>
   </div>
+
+  <!-- 修改识别码弹窗 -->
+  <ElDialog v-model="idCodeDialogVisible" title="修改设备识别码" width="420px">
+    <div style="padding:8px 0">
+      <p style="color:#8b95a8;margin-bottom:12px;font-size:13px">
+        修改后密码将自动更新（密码 = 出厂编号 + 识别码），并同步到 EMQX。
+      </p>
+      <ElInput v-model="newIdCode" placeholder="输入新识别码" maxlength="20" show-word-limit />
+    </div>
+    <template #footer>
+      <ElButton @click="idCodeDialogVisible = false">取消</ElButton>
+      <ElButton type="primary" :loading="idCodeLoading" @click="submitIdCode">确认修改</ElButton>
+    </template>
+  </ElDialog>
+
+  <!-- 设备凭证弹窗 -->
+  <ElDialog v-model="credentialsVisible" title="设备 MQTT 凭证" width="480px">
+    <div v-loading="credentialsLoading">
+      <div v-if="credentialsError" style="color:#f56c6c;text-align:center;padding:20px">{{ credentialsError }}</div>
+      <div v-else-if="credentialsData" class="credentials-info">
+        <div class="cred-row"><span class="cred-label">MQTT 地址</span><span class="cred-value">{{ credentialsData.protocol }}://{{ credentialsData.broker }}:{{ credentialsData.port }}</span></div>
+        <div class="cred-row"><span class="cred-label">用户名</span><span class="cred-value cred-mono">{{ credentialsData.username }}</span></div>
+        <div class="cred-row"><span class="cred-label">密码</span><span class="cred-value cred-mono">{{ credentialsData.password }}</span></div>
+        <div class="cred-row"><span class="cred-label">Topic 前缀</span><span class="cred-value cred-mono">{{ credentialsData.topicPrefix }}</span></div>
+        <div class="cred-note">请将以上信息烧录到设备中，密码请妥善保管。</div>
+      </div>
+      <div v-else style="text-align:center;padding:20px;color:#909399">该设备尚未配置 MQTT 凭证，请编辑设备并填写出厂编号。</div>
+    </div>
+  </ElDialog>
 </template>
 
 <style scoped>
@@ -2834,5 +2927,43 @@ button.ctrl-btn {
   .ctrl-btn {
     min-height: 110px;
   }
+}
+/* ──────── 设备凭证弹窗 ──────── */
+.credentials-info {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cred-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #2a3450;
+}
+.cred-label {
+  color: #8b95a8;
+  font-size: 13px;
+  min-width: 80px;
+}
+.cred-value {
+  color: #e0e6ed;
+  font-size: 14px;
+  word-break: break-all;
+}
+.cred-mono {
+  font-family: 'Consolas', 'Courier New', monospace;
+  background: #1a2332;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.cred-note {
+  margin-top: 8px;
+  padding: 10px;
+  background: #2a3040;
+  border-radius: 6px;
+  color: #f0a020;
+  font-size: 12px;
+  text-align: center;
 }
 </style>
