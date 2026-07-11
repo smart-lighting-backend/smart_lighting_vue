@@ -906,7 +906,9 @@ function initThreeScene() {
     if (entry.baseGlow) {
       entry.baseGlow.material.opacity = isOff ? 0 : 0.6
     }
-    console.log('[3D] applyDeviceBrightness:', deviceId, '→', pct + '%', 'isOff:', isOff, 'entry:', !!entry)
+    console.log('[3D] applyDeviceBrightness:', deviceId, '→', pct + '%', 'isOff:', isOff, 'entry:', !!entry, 'bulb:', !!entry.bulb)
+    // Force render to show changes immediately
+    renderer.render(scene, camera)
   }
   setDeviceLight3D = (deviceId, brightness) => { applyDeviceBrightness(deviceId, brightness) }
 
