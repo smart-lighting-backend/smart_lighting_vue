@@ -1,13 +1,15 @@
 <script setup>
 import { ref, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick, inject } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import * as echarts from 'echarts'
-import { fetchDashboardStats, fetchEnergyTrend, fetchDistrictData, triggerEnergyCalc, genTestData } from '../api/dashboard.js'
+import { fetchDashboardStats, fetchEnergyTrend, fetchDistrictData, triggerEnergyCalc, genTestData, fetchEdgeRecent, triggerEdgeSimulation } from '../api/dashboard.js'
 import { fetchAllDevicesForMap } from '../api/devices.js'
 
 import { useCountUp } from '../composables/useCountUp.js'
+import { useAutoRefresh } from '../composables/useAutoRefresh.js'
 import { withCache, invalidateCache } from '../utils/requestCache.js'
 import { parseLatestData } from '../utils/manualControlState.js'
 import { getControlState } from '../utils/controlStateStore.js'
@@ -49,14 +51,58 @@ const { display: dispSaving, start: startSaving } = useCountUp({ suffix: '%', de
 const { display: dispEnergy, start: startEnergy } = useCountUp({ suffix: ' kWh', decimals: 1 })
 
 // ═══ 地图相关 ═══
+const selectedArea = ref('')
 const highlightDeviceId = ref('')
-function onMapMarkerClick(device) { highlightDeviceId.value = device.deviceId }
+function onMapMarkerClick(device) {
+  highlightDeviceId.value = device.deviceId
+  selectedArea.value = ''
+}
 
 // ═══ 能耗计算 ═══
 const calcLoading = ref(false)
 const genLoading = ref(false)
 
-// ═══ ECharts ═══
+async function handleCalcEnergy() {
+  if (calcLoading.value) return
+  calcLoading.value = true
+  try {
+    await triggerEnergyCalc()
+    await softRefresh()
+    ElMessage.success('当日能耗计算已完成')
+  } catch (e) {
+    console.warn('计算失败:', e)
+  } finally { calcLoading.value = false }
+}
+
+let autoCalcDone = false
+async function autoCalcEnergyIfFirst() {
+  if (autoCalcDone) return
+  autoCalcDone = true
+  try {
+    await triggerEnergyCalc()
+  } catch (_) { /* 静默失败 */ }
+}
+
+// ═══ AI 边缘决策 ═══
+const edgeRecords = ref([])
+const edgeLoading = ref(false)
+async function loadEdgeRecent() {
+  try {
+    const res = await fetchEdgeRecent({ limit: 20 })
+    const data = res?.data || res
+    edgeRecords.value = Array.isArray(data) ? data : (data?.records || [])
+  } catch (_) { /* ignore */ }
+}
+async function handleTriggerEdge() {
+  if (edgeLoading.value) return
+  edgeLoading.value = true
+  try {
+    await triggerEdgeSimulation()
+    await loadEdgeRecent()
+  } catch (_) { /* ignore */ }
+  finally { edgeLoading.value = false }
+}
+
 const energyChartRef = ref(null)
 const donutChartRef = ref(null)
 let energyChart = null
@@ -67,6 +113,8 @@ const threeContainer = ref(null)
 let threeDispose = null
 const threeDeviceStats = ref({ count: 0, online: 0, alarm: 0 })  // 3D 场景设备统计
 let syncDevices3D = null  // 外部可调用的设备同步函数
+let flyToArea3D = null     // 外部可调用的相机飞行函数
+let highlight3D = null     // 外部可调用的设备高亮函数
 
 // ═══ 数据加载 ═══
 async function loadAllData() {
@@ -97,8 +145,8 @@ async function softRefresh() {
   await loadAllData()
 }
 
-// MQTT 订阅保留（基础设施，供其他组件使用），但 Dashboard 不再依赖 MQTT 实时更新
-// 设备状态同步由 15s 自动页面刷新处理
+// MQTT 订阅保留（基础设施，供其他组件使用），但 Dashboard 已改用软轮询
+// 设备状态同步由 15s 软轮询 + 3D 增量更新处理
 
 // ═══ 时钟 ═══
 function updateClock() {
@@ -111,18 +159,6 @@ function updateClock() {
 }
 clockTimer = setInterval(updateClock, 1000)
 updateClock()
-
-// ═══ 能耗操作 ═══
-async function handleCalcEnergy() {
-  if (calcLoading.value) return
-  calcLoading.value = true
-  try {
-    await triggerEnergyCalc()
-    await softRefresh()
-  } catch (e) {
-    console.warn('计算失败:', e)
-  } finally { calcLoading.value = false }
-}
 
 async function handleGenData() {
   if (genLoading.value) return
@@ -137,19 +173,16 @@ async function handleGenData() {
 
 // ═══ ECharts 能耗图 ═══
 function buildEnergyOption(data) {
-  const isEmpty = !data.labels || !data.current || data.current.length === 0 || data.current.every(v => v === 0)
-  if (isEmpty) {
-    const hours = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`)
-    const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min
-    data = { labels: hours, current: hours.map(() => rand(180, 420)), lastWeek: hours.map(() => rand(200, 450)) }
-  }
+  const hours = data.labels || Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`)
+  const cur = data.current || hours.map(() => 0)
+  const prev = data.lastWeek || hours.map(() => 0)
   return {
     backgroundColor: 'transparent',
     grid: { top: 20, bottom: 30, left: 44, right: 16 },
     tooltip: { trigger: 'axis', backgroundColor: 'rgba(4,20,50,0.96)', borderColor: 'rgba(77,208,225,0.4)', textStyle: { color: '#d0eaf8', fontSize: 12 } },
     legend: { top: 0, right: 0, textStyle: { color: 'rgba(140,190,220,0.7)', fontSize: 11 }, data: ['本日能耗', '上周同期'], itemWidth: 14, itemHeight: 8 },
     xAxis: {
-      type: 'category', data: data.labels,
+      type: 'category', data: hours,
       axisLine: { lineStyle: { color: 'rgba(77,208,225,0.2)' } },
       axisLabel: { color: 'rgba(160,210,240,0.65)', fontSize: 10, interval: 3 },
       splitLine: { show: false },
@@ -161,12 +194,12 @@ function buildEnergyOption(data) {
     },
     series: [
       {
-        name: '本日能耗', type: 'line', data: data.current, smooth: true, symbol: 'none',
+        name: '本日能耗', type: 'line', data: cur, smooth: true, symbol: 'none',
         lineStyle: { color: '#4dd0e1', width: 2 },
         areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(77,208,225,0.2)' }, { offset: 1, color: 'rgba(77,208,225,0.01)' }]) },
       },
       {
-        name: '上周同期', type: 'line', data: data.lastWeek, smooth: true, symbol: 'none',
+        name: '上周同期', type: 'line', data: prev, smooth: true, symbol: 'none',
         lineStyle: { color: 'rgba(109,93,252,0.5)', width: 1, type: 'dashed' },
       },
     ],
@@ -237,7 +270,20 @@ function buildBarOption(data) {
 
 function initBarChart(data) {
   if (!barChartRef.value) return
-  if (!barChart) barChart = echarts.init(barChartRef.value)
+  if (!barChart) {
+    barChart = echarts.init(barChartRef.value)
+    barChart.on('click', (params) => {
+      if (params.name) {
+        selectedArea.value = params.name
+        if (viewMode.value !== '3d') {
+          viewMode.value = '3d'
+          nextTick(() => flyToArea3D?.(params.name))
+        } else {
+          flyToArea3D?.(params.name)
+        }
+      }
+    })
+  }
   barChart.setOption(buildBarOption(data), true)
 }
 
@@ -424,8 +470,15 @@ function initThreeScene() {
   // ══════════════════════════════════════════════════════════════
   const deviceObjectMap = new Map()
   const areaGroups = new Map()
+  const areaPlatformMap = new Map()
   let connectionLines = []
   let areaMarkerRings = []
+  // Camera fly-to state
+  let flyTarget = null
+  let flyStartPos = null
+  let flyStartLookAt = null
+  let flyStartTime = 0
+  const FLY_DURATION = 800
 
   const STATUS_3D  = { 1: 0x4dd0e1, 2: 0x708090, 3: 0xef5350, 0: 0x404050 }  // hex base
   const RING_3D    = { 1: 0x4dd0e1, 2: 0xff4444, 3: 0xef5350, 0: 0x404050 }  // bottom ring: offline=RED
@@ -542,6 +595,7 @@ function initThreeScene() {
     areaLabelSprites.length = 0
     areaPlatforms.forEach(p => { p.geometry.dispose(); p.material.dispose(); scene.remove(p) })
     areaPlatforms.length = 0
+    areaPlatformMap.clear()
 
     areaGroups.forEach((info, name) => {
       const rad = info.platformRadius || 1.0
@@ -553,8 +607,10 @@ function initThreeScene() {
       const platform = new THREE.Mesh(pfGeo, pfMat)
       platform.position.set(info.center.x, 0.04, info.center.z)
       platform.receiveShadow = true
+      platform.userData = { areaName: name, isPlatform: true }
       scene.add(platform)
       areaPlatforms.push(platform)
+      areaPlatformMap.set(name, platform)
 
       // Hex edge border
       const edgeGeo = new THREE.RingGeometry(rad + 0.25, rad + 0.35, 6)
@@ -585,6 +641,8 @@ function initThreeScene() {
     })
     deviceObjectMap.clear()
     areaGroups.clear()
+    // Reset highlight ring (devices are being recreated)
+    if (highlightRing) { scene.remove(highlightRing); highlightRing.geometry.dispose(); highlightRing.material.dispose(); highlightRing = null }
     clearConnections()
     updateAreaMarkers()
     if (!devices || devices.length === 0) return
@@ -716,9 +774,57 @@ function initThreeScene() {
     })
   }
 
-  // 每次同步都完全重建 3D 设备（用最新数据），不再做增量更新
+  // Camera fly-to helpers
+  function startFly(targetPos, targetLookAt) {
+    flyStartPos = camera.position.clone()
+    flyStartLookAt = controls.target.clone()
+    flyTarget = { pos: targetPos.clone(), lookAt: targetLookAt.clone() }
+    flyStartTime = performance.now()
+  }
+  function flyToArea(areaName) {
+    const info = areaGroups.get(areaName)
+    if (!info) return
+    const targetPos = new THREE.Vector3(info.center.x + 5, 8, info.center.z + 8)
+    const targetLookAt = new THREE.Vector3(info.center.x, 0, info.center.z)
+    startFly(targetPos, targetLookAt)
+  }
+  function flyToDevice(deviceId) {
+    const entry = deviceObjectMap.get(deviceId)
+    if (!entry) return
+    const p = entry.group.position
+    const targetPos = new THREE.Vector3(p.x + 2, p.y + 3, p.z + 3)
+    const targetLookAt = new THREE.Vector3(p.x, p.y + 1, p.z)
+    startFly(targetPos, targetLookAt)
+  }
+  // Module-level flyToArea wrapper (for bar chart click)
+  flyToArea3D = (areaName) => { flyToArea(areaName) }
+
+  // Device highlight ring (3D white glow)
+  let highlightRing = null
+  function highlightDevice3D(deviceId) {
+    if (highlightRing) {
+      scene.remove(highlightRing)
+      highlightRing.geometry.dispose()
+      highlightRing.material.dispose()
+      highlightRing = null
+    }
+    if (!deviceId) return
+    const entry = deviceObjectMap.get(deviceId)
+    if (!entry) return
+    const pos = entry.group.position
+    const ringGeo = new THREE.TorusGeometry(0.55, 0.05, 16, 24)
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7, depthWrite: false })
+    highlightRing = new THREE.Mesh(ringGeo, ringMat)
+    highlightRing.rotation.x = -Math.PI / 2
+    highlightRing.position.set(pos.x, 0.08, pos.z)
+    highlightRing.name = 'highlightRing'
+    scene.add(highlightRing)
+  }
+  highlight3D = (id) => { highlightDevice3D(id) }
+
+  // 设备同步：优先增量 diff 更新，首次/重排时走全量 layout
   syncDevices3D = (devs) => {
-    layoutDevices(devs)
+    syncDevices(devs)
   }
 
   // Scene self-loads devices (full rebuild)
@@ -757,10 +863,21 @@ function initThreeScene() {
   let lastTime = performance.now()
   function animate() {
     requestAnimationFrame(animate)
+    if (viewMode.value !== '3d') return
     const now = performance.now()
     const dt = Math.min((now - lastTime) / 1000, 0.1)
     lastTime = now
     controls.update()
+
+    // Camera fly-to animation (ease-out cubic)
+    if (flyTarget) {
+      const elapsed = now - flyStartTime
+      const t = Math.min(elapsed / FLY_DURATION, 1.0)
+      const ease = 1 - Math.pow(1 - t, 3)
+      camera.position.lerpVectors(flyStartPos, flyTarget.pos, ease)
+      controls.target.lerpVectors(flyStartLookAt, flyTarget.lookAt, ease)
+      if (t >= 1.0) { flyTarget = null }
+    }
 
     particlesGroup.children.forEach((p, i) => {
       p.rotation.y += dt * (0.12 + i * 0.04) * (i % 2 === 0 ? 1 : -0.7)
@@ -776,6 +893,13 @@ function initThreeScene() {
         if (entry.baseGlow) entry.baseGlow.material.opacity = 0.3 + Math.sin(Date.now() * 0.008) * 0.25
       }
     })
+
+    // Highlight ring pulse
+    if (highlightRing) {
+      const s = 0.85 + Math.sin(Date.now() * 0.006) * 0.15
+      highlightRing.scale.set(s, s, 1)
+      highlightRing.material.opacity = 0.4 + Math.sin(Date.now() * 0.006) * 0.3
+    }
 
     renderer.render(scene, camera)
   }
@@ -804,6 +928,21 @@ function initThreeScene() {
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
     raycaster.setFromCamera(mouse, camera)
+
+    // 1) Check area platforms first
+    const platMeshes = [...areaPlatformMap.values()]
+    const platIntersects = raycaster.intersectObjects(platMeshes)
+    if (platIntersects.length > 0) {
+      const areaName = platIntersects[0].object.userData?.areaName
+      if (areaName) {
+        selectedArea.value = areaName
+        flyToArea(areaName)
+        dismissPopup()
+        return
+      }
+    }
+
+    // 2) Check device groups
     const allGroups = [...deviceObjectMap.values()].map(e => e.group)
     const intersects = raycaster.intersectObjects(allGroups, true)
     if (intersects.length > 0) {
@@ -813,6 +952,9 @@ function initThreeScene() {
         const d = obj.userData
         if (d.deviceId) {
           showDevicePopup(d)
+          highlightDeviceId.value = d.deviceId
+          selectedArea.value = ''
+          flyToDevice(d.deviceId)
         }
       } else {
         dismissPopup()
@@ -827,6 +969,16 @@ function initThreeScene() {
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
     raycaster.setFromCamera(mouse, camera)
+
+    // Check area platform hover (cursor pointer)
+    const platMeshes = [...areaPlatformMap.values()]
+    const platIntersects = raycaster.intersectObjects(platMeshes)
+    if (platIntersects.length > 0) {
+      renderer.domElement.style.cursor = 'pointer'
+      hoveredDevice.value = null
+      return
+    }
+
     const allGroups = [...deviceObjectMap.values()].map(e => e.group)
     const intersects = raycaster.intersectObjects(allGroups, true)
     if (intersects.length > 0) {
@@ -836,10 +988,12 @@ function initThreeScene() {
         const d = obj.userData
         hoveredDevice.value = { name: d.deviceName || d.deviceId, area: d.area, status: d.status }
         hoverTooltipStyle.value = { left: (event.clientX + 16) + 'px', top: (event.clientY - 10) + 'px' }
+        renderer.domElement.style.cursor = 'pointer'
         return
       }
     }
     hoveredDevice.value = null
+    renderer.domElement.style.cursor = 'default'
   }
   renderer.domElement.addEventListener('mousemove', onMouseMove)
 
@@ -861,11 +1015,15 @@ function initThreeScene() {
     })
     deviceObjectMap.clear()
     areaGroups.clear()
+    areaPlatformMap.clear()
     areaLabelSprites.forEach(s => { if (s.material.map) s.material.map.dispose(); s.material.dispose() })
     areaLabelSprites.length = 0
     areaPlatforms.forEach(p => { p.geometry.dispose(); p.material.dispose() })
     areaPlatforms.length = 0
     syncDevices3D = null
+    flyToArea3D = null
+    highlight3D = null
+    if (highlightRing) { highlightRing.geometry.dispose(); highlightRing.material.dispose(); highlightRing = null }
     if (container.contains(renderer.domElement)) {
       container.removeChild(renderer.domElement)
     }
@@ -901,7 +1059,8 @@ const tickerMessages = ref([
 
 // ═══ Lifecycle ═══
 onMounted(async () => {
-  await loadAllData()
+  // 登录后首次进入自动计算当日能耗（与数据加载并行，避免阻塞页面渲染）
+  await Promise.all([autoCalcEnergyIfFirst(), loadAllData()])
   await nextTick()
   initThreeScene()
   // If devices loaded before the 3D scene was ready, sync them now
@@ -909,62 +1068,89 @@ onMounted(async () => {
     syncDevices3D(allDevices.value)
   }
   await nextTick()
-  initEnergyChart({})
   initDonutChart()
   initBarChart(districts.value || [])
   window.addEventListener('resize', handleAllChartResize)
-  document.addEventListener('visibilitychange', handleVisibilityChange)
+  // 加载边缘AI决策记录
+  loadEdgeRecent()
+  // 启动多层软轮询（设备15s、统计60s、趋势5min）
+  startStatsPolling()
+  startTrendPolling()
+  // 首次设备轮询延迟5s，给3D场景初始化留出时间
+  setTimeout(() => { pollDeviceStatus() }, 5000)
 })
 
-// 兜底方案：每 15 秒全量刷新页面，确保 3D 状态与后端一致
-// 计时仅在停留在数字孪生页面(3D视图)时累计，离开或切换标签页后重置
-let autoReloadTimer = null
-function startAutoReload() {
-  stopAutoReload()
-  autoReloadTimer = setInterval(() => {
-    if (document.hidden || viewMode.value !== '3d') return
-    location.reload()
-  }, 15000)
+// ═══ 多层软轮询（替代 location.reload，保留 UI 状态） ═══
+
+// Tier 1: 设备状态 — 15s 高频，增量更新 3D 场景
+async function pollDeviceStatus() {
+  try {
+    const list = await fetchAllDevicesForMap()
+    const devs = Array.isArray(list) ? list : (list?.data || list?.records || [])
+    if (devs.length > 0) {
+      allDevices.value = devs
+      if (syncDevices3D) syncDevices3D(devs)
+    }
+  } catch (_) { /* silent */ }
 }
-function resetAutoReload() {
-  if (autoReloadTimer) { startAutoReload() }
+
+// Tier 2: 仪表盘统计+图表 — 60s 中频
+let statsTimer = null
+function startStatsPolling() {
+  stopStatsPolling()
+  statsTimer = setInterval(async () => {
+    if (document.hidden) return
+    await softRefresh()
+    if (barChart && districts.value?.length) {
+      barChart.setOption(buildBarOption(districts.value), true)
+    }
+    updateDonutChart()
+  }, 60000)
 }
-function stopAutoReload() {
-  if (autoReloadTimer) { clearInterval(autoReloadTimer); autoReloadTimer = null }
+function stopStatsPolling() {
+  if (statsTimer) { clearInterval(statsTimer); statsTimer = null }
 }
-// 3D 场景初始化后启动自动刷新计时
-const origInitThree = initThreeScene
-initThreeScene = function() {
-  origInitThree()
-  startAutoReload()
+
+// Tier 3: 能耗趋势 — 5min 低频
+let trendTimer = null
+function startTrendPolling() {
+  stopTrendPolling()
+  trendTimer = setInterval(async () => {
+    if (document.hidden) return
+    try {
+      const t = await withCache(() => fetchEnergyTrend(), 'dashboard:trend', { ttl: 0 })
+      initEnergyChart(t.data || {})
+    } catch (_) { /* silent */ }
+  }, 300000)
 }
+function stopTrendPolling() {
+  if (trendTimer) { clearInterval(trendTimer); trendTimer = null }
+}
+
+const devicePoller = useAutoRefresh(pollDeviceStatus, { interval: 15000, immediateFirst: false })
 
 onActivated(() => {
   handleAllChartResize()
   if (!threeDispose && threeContainer.value && viewMode.value === '3d') {
     nextTick(() => initThreeScene())
   }
+  startStatsPolling()
+  startTrendPolling()
 })
 
 onDeactivated(() => {
+  stopStatsPolling()
+  stopTrendPolling()
   destroyThreeScene()
-  stopAutoReload()
 })
-
-// ═══ 标签页可见性变化时刷新 3D 数据并重置自动刷新计时 ═══
-function handleVisibilityChange() {
-  if (document.hidden) return
-  if (viewMode.value !== '3d') return
-  // 切回标签页后重置 15s 计时
-  resetAutoReload()
-}
 
 onUnmounted(() => {
   clearInterval(clockTimer)
-  stopAutoReload()
+  stopStatsPolling()
+  stopTrendPolling()
+  devicePoller.stop()
   destroyThreeScene()
   window.removeEventListener('resize', handleAllChartResize)
-  document.removeEventListener('visibilitychange', handleVisibilityChange)
   energyChart?.dispose()
   donutChart?.dispose()
   barChart?.dispose()
@@ -973,12 +1159,14 @@ onUnmounted(() => {
 // ═══ 视图切换 ═══
 function switchView(mode) {
   viewMode.value = mode
-  if (mode === 'map') {
-    destroyThreeScene()
-  } else {
-    nextTick(initThreeScene)
-  }
 }
+
+// 切换到地图时触发 AMap 重绘（v-show 切换后容器尺寸可能变化）
+watch(viewMode, (mode) => {
+  if (mode === 'map') {
+    nextTick(() => { window.dispatchEvent(new Event('resize')) })
+  }
+})
 
 // ═══ Watch districts ═══
 watch(districts, (data) => {
@@ -991,6 +1179,11 @@ watch(districts, (data) => {
 
 watch(() => stats.value.onlineDevices, () => {
   updateDonutChart()
+})
+
+// 跨视图设备高亮同步（3D ↔ 地图）
+watch(highlightDeviceId, (id) => {
+  highlight3D?.(id)
 })
 
 </script>
@@ -1144,9 +1337,9 @@ watch(() => stats.value.onlineDevices, () => {
           <!-- 地图视图 -->
           <div v-show="viewMode === 'map'" class="map-container">
             <DeviceMap
-              v-if="viewMode === 'map'"
               :devices="allDevices"
               :highlightDeviceId="highlightDeviceId"
+              v-model:selectedArea="selectedArea"
               height="100%"
               @marker-click="onMapMarkerClick"
             />
@@ -1185,15 +1378,30 @@ watch(() => stats.value.onlineDevices, () => {
           </div>
         </div>
 
-        <!-- AI 边缘决策占位 -->
+        <!-- AI 边缘决策 -->
         <div class="panel panel-ai flex-1">
-          <div class="panel-title"><span class="panel-title-dot"></span>AI边缘决策</div>
-          <div class="ai-placeholder">
+          <div class="panel-title">
+            <span class="panel-title-dot"></span>AI边缘决策
+            <span class="panel-actions">
+              <button class="action-btn" :disabled="edgeLoading" @click="handleTriggerEdge">{{ edgeLoading ? '执行中...' : '触发' }}</button>
+            </span>
+          </div>
+          <div class="edge-list" v-if="edgeRecords.length > 0">
+            <div class="edge-item" v-for="(r, i) in edgeRecords" :key="i">
+              <div class="edge-item-top">
+                <span class="edge-device">{{ r.deviceId }}</span>
+                <span class="edge-result" :class="{ hit: r.result?.includes('EXECUTED') }">{{ r.result?.includes('EXECUTED') ? '命中' : '未命中' }}</span>
+              </div>
+              <div class="edge-item-mid">{{ r.matchedPolicy || '无匹配策略' }} → {{ r.actionTaken || '—' }}</div>
+              <div class="edge-item-time">{{ r.createTime?.slice(0, 16)?.replace('T', ' ') || '' }}</div>
+            </div>
+          </div>
+          <div class="ai-placeholder" v-else>
             <div class="ai-placeholder-icon">
               <svg viewBox="0 0 24 24" fill="none" width="32" height="32"><rect x="2" y="2" width="20" height="20" rx="3" stroke="currentColor" stroke-width="1.2"/><circle cx="9" cy="12" r="1.5" fill="currentColor" opacity="0.5"/><circle cx="15" cy="12" r="1.5" fill="currentColor" opacity="0.5"/><path d="M9 17h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.5"/></svg>
             </div>
-            <div class="ai-placeholder-text">AI边缘决策</div>
-            <div class="ai-placeholder-hint">功能开发中...</div>
+            <div class="ai-placeholder-text">暂无边缘决策记录</div>
+            <div class="ai-placeholder-hint">点击"触发"执行一次模拟</div>
           </div>
         </div>
       </div>
@@ -1529,6 +1737,24 @@ watch(() => stats.value.onlineDevices, () => {
 .ai-placeholder-hint {
   font-size: 10px; color: rgba(140,190,220,0.18);
 }
+
+/* ── Edge AI Decision List ── */
+.edge-list {
+  flex: 1; overflow-y: auto; padding: 0 8px 8px;
+}
+.edge-list::-webkit-scrollbar { width: 3px; }
+.edge-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+.edge-item {
+  padding: 6px 8px; margin-bottom: 4px;
+  background: rgba(0,200,180,0.03); border: 1px solid rgba(0,200,180,0.06);
+  border-radius: 4px;
+}
+.edge-item-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
+.edge-device { font-size: 11px; color: rgba(180,210,240,0.8); font-weight: 600; font-family: monospace; }
+.edge-result { font-size: 10px; padding: 1px 5px; border-radius: 2px; background: rgba(255,100,100,0.15); color: rgba(255,140,140,0.7); }
+.edge-result.hit { background: rgba(0,200,180,0.15); color: rgba(0,220,200,0.7); }
+.edge-item-mid { font-size: 11px; color: rgba(140,190,220,0.45); margin-bottom: 1px; }
+.edge-item-time { font-size: 10px; color: rgba(140,190,220,0.25); font-family: monospace; }
 
 /* ── Center panel ── */
 .panel-center {

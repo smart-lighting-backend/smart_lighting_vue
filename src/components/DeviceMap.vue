@@ -10,10 +10,11 @@ const { AMap: AMapRef, loaded, loading, error } = useAMap()
 const props = defineProps({
   devices: { type: Array, default: () => [] },
   highlightDeviceId: { type: String, default: '' },
+  selectedArea: { type: String, default: '' },
   height: { type: String, default: '360px' },
 })
 
-const emit = defineEmits(['marker-click'])
+const emit = defineEmits(['marker-click', 'update:selectedArea'])
 
 const wrapperRef = ref(null)
 const mapContainerRef = ref(null)
@@ -73,10 +74,13 @@ const areaLegend = computed(() => {
 })
 
 // ── 区域分组选择 ──
-const selectedArea = ref('')
+const localArea = computed({
+  get: () => props.selectedArea,
+  set: (val) => emit('update:selectedArea', val),
+})
 const selectedAreaCount = computed(() => {
-  if (!selectedArea.value) return 0
-  return props.devices.filter(d => d.area === selectedArea.value).length
+  if (!localArea.value) return 0
+  return props.devices.filter(d => d.area === localArea.value).length
 })
 const areaOptions = computed(() => {
   const areas = [...new Set(props.devices.map(d => d.area).filter(Boolean))]
@@ -124,7 +128,7 @@ function selectArea(area) {
   }, 400)
 }
 
-watch(selectedArea, (val) => { selectArea(val) })
+watch(localArea, (val) => { selectArea(val) })
 
 function toGrayish(hex) {
   // 去饱和：让颜色偏灰，保持低透明度
@@ -462,12 +466,12 @@ defineExpose({ highlightDevice, clearHighlight, fitBounds: () => {} })
         <span><b>{{ mapStats.online }}</b> 在线</span>
         <span><b>{{ mapStats.warning }}</b> 异常</span>
       </div>
-      <select v-if="areaOptions.length > 1" v-model="selectedArea" class="dm-area-select">
+      <select v-if="areaOptions.length > 1" v-model="localArea" class="dm-area-select">
         <option value="">全部区域</option>
         <option v-for="a in areaOptions" :key="a" :value="a">{{ a }}</option>
       </select>
-      <span v-if="selectedArea" class="dm-area-count">{{ selectedAreaCount }} 台</span>
-      <button v-if="selectedArea" class="dm-clear-btn" @click="selectArea('')">×</button>
+      <span v-if="localArea" class="dm-area-count">{{ selectedAreaCount }} 台</span>
+      <button v-if="localArea" class="dm-clear-btn" @click="localArea = ''">×</button>
     </div>
     <div v-if="!loaded" class="dm-overlay">
       <span v-if="loading">地图加载中...</span>
