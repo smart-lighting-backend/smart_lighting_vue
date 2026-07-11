@@ -304,7 +304,14 @@ const MOCK_MENUS = [
 function mockLogin(username) {
   return {
     token: `mock-token-dev-${Date.now()}`,
-    userInfo: { username, roleCode: 'SUPER_ADMIN', roleName: '系统管理员（Mock）' },
+    userInfo: {
+      username,
+      realName: '系统管理员',
+      department: '技术部',
+      phone: '13800000001',
+      roleCode: 'SUPER_ADMIN',
+      roleName: '系统管理员（Mock）',
+    },
     permissions: MOCK_PERMISSIONS,
     menus: MOCK_MENUS,
   }
@@ -328,6 +335,9 @@ async function handleLogin() {
       token    = res.data.token
       userInfo = {
         username: res.data.username,
+        realName: res.data.realName,
+        department: res.data.department,
+        phone: res.data.phone,
         roleCode: res.data.roleCode,
         roleName: getRoleLabel(res.data.roleCode),
       }

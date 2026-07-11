@@ -6,7 +6,7 @@
  * - 登录后从 /me 刷新 permissions 和 menus
  */
 import { createRouter, createWebHistory } from 'vue-router'
-import { getToken, clearAuth, saveAuth, savePermissions, saveMenus, fetchCurrentUser, getUserInfo, getPermissions, isAuthFresh } from '../api/auth.js'
+import { getToken, clearAuth, saveAuth, savePermissions, saveMenus, fetchCurrentUser, getUserInfo, getPermissions, getRoleLabel, isAuthFresh } from '../api/auth.js'
 
 const routes = [
   {
@@ -180,9 +180,9 @@ router.beforeEach(async (to, from) => {
     try {
       const res = await fetchCurrentUser()
       if (res?.data) {
-        const { username, roleCode, permissions, menus } = res.data
+        const { username, realName, department, phone, roleCode, permissions, menus } = res.data
         const inLocal = !!localStorage.getItem('smart_light_token')
-        saveAuth(token, { username, roleCode }, inLocal)
+        saveAuth(token, { username, realName, department, phone, roleCode, roleName: getRoleLabel(roleCode) }, inLocal)
         savePermissions(permissions || [], inLocal)
         saveMenus(menus || [], inLocal)
       }

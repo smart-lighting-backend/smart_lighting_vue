@@ -11,6 +11,9 @@ export function useUserInfo() {
 
   const userInfo = computed(() => getUserInfo() || { username: 'Admin', roleCode: 'SUPER_ADMIN', roleName: '系统管理员' })
   const username = computed(() => userInfo.value?.username || 'Admin')
+  const realName = computed(() => userInfo.value?.realName || '未设置')
+  const department = computed(() => userInfo.value?.department || '未设置')
+  const phone = computed(() => userInfo.value?.phone || '未设置')
   const roleName = computed(() => userInfo.value?.roleName || '系统管理员')
   const permissions = computed(() => {
     permVersion.value  // 建立响应式依赖：版本号递增时重新读取 storage
@@ -26,5 +29,5 @@ export function useUserInfo() {
     return permissions.value.includes(code)
   }
 
-  return { userInfo, username, roleName, permissions, menus, hasPerm }
+  return { userInfo, username, realName, department, phone, roleName, permissions, menus, hasPerm }
 }

@@ -10,7 +10,7 @@ import ManualControlModal from '../components/ManualControlModal.vue'
 
 const route  = useRoute()
 const router = useRouter()
-const { username, roleName, permissions } = useUserInfo()
+const { realName, department, phone, roleName, permissions } = useUserInfo()
 
 const showManual = ref(false)
 const showUserInfo = ref(false)
@@ -358,20 +358,28 @@ onMounted(async () => {
     <!-- 用户基本信息弹窗 -->
     <Transition name="fade-up">
       <div v-if="showUserInfo" class="user-info-overlay" @click.self="showUserInfo = false">
-        <div class="user-info-card">
-          <button class="ui-close" @click="showUserInfo = false">
+        <div class="user-info-card" role="dialog" aria-modal="true" aria-labelledby="user-info-title">
+          <button class="ui-close" type="button" aria-label="关闭用户信息" title="关闭" @click="showUserInfo = false">
             <svg viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
           </button>
           <div class="ui-header">
             <div class="ui-avatar">
               <svg viewBox="0 0 24 24" fill="none"><path d="M12 12c2.7 0 4-1.8 4-4s-1.3-4-4-4-4 1.8-4 4 1.3 4 4 4zm0 2c-2.67 0-8 1.34-8 4v1a1 1 0 001 1h14a1 1 0 001-1v-1c0-2.66-5.33-4-8-4z" fill="currentColor"/></svg>
             </div>
-            <div class="ui-title">用户信息</div>
+            <div class="ui-title" id="user-info-title">用户信息</div>
           </div>
           <div class="ui-body">
             <div class="ui-row">
-              <span class="ui-label">用户名</span>
-              <span class="ui-value">{{ username }}</span>
+              <span class="ui-label">姓名</span>
+              <span class="ui-value">{{ realName }}</span>
+            </div>
+            <div class="ui-row">
+              <span class="ui-label">部门</span>
+              <span class="ui-value">{{ department }}</span>
+            </div>
+            <div class="ui-row">
+              <span class="ui-label">联系电话</span>
+              <span class="ui-value">{{ phone }}</span>
             </div>
             <div class="ui-row">
               <span class="ui-label">角色</span>
@@ -379,7 +387,7 @@ onMounted(async () => {
             </div>
           </div>
           <div class="ui-footer">
-            <button class="ui-logout-btn" @click="logout">
+            <button class="ui-logout-btn" type="button" @click="logout">
               <svg viewBox="0 0 24 24" fill="none"><path d="M16 17l5-5-5-5M21 12H9M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
               退出登录
             </button>
@@ -695,113 +703,169 @@ onMounted(async () => {
 .user-info-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(4px);
+  padding: 24px;
+  background: rgba(2, 8, 18, 0.74);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
 }
 .user-info-card {
-  width: 340px;
-  background: linear-gradient(180deg, #0a1e3a 0%, #060e1f 100%);
-  border: 1px solid rgba(0, 150, 220, 0.25);
-  border-radius: 16px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 150, 220, 0.1) inset;
+  width: min(420px, 100%);
+  background: rgba(255, 255, 255, 0.96) !important;
+  border: 1px solid rgba(0, 141, 230, 0.18) !important;
+  border-radius: 8px;
+  box-shadow: 0 24px 70px rgba(8, 38, 66, 0.28), 0 1px 0 rgba(255, 255, 255, 0.9) inset !important;
   position: relative;
   overflow: hidden;
 }
+.user-info-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background: #35c7d8;
+}
 .ui-close {
   position: absolute;
-  top: 12px; right: 12px;
-  width: 28px; height: 28px;
+  top: 16px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
   border-radius: 6px;
-  border: none;
-  background: rgba(255,255,255,0.05);
-  color: rgba(140, 200, 230, 0.6);
+  border: 1px solid transparent;
+  background: transparent;
+  color: #60748a;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition: color 0.2s, background 0.2s, border-color 0.2s;
 }
 .ui-close:hover {
-  background: rgba(255,80,80,0.2);
-  color: #ff8080;
+  background: rgba(0, 141, 230, 0.08);
+  border-color: rgba(0, 141, 230, 0.14);
+  color: #0d1b2d;
 }
-.ui-close svg { width: 16px; height: 16px; }
+.ui-close:focus-visible,
+.ui-logout-btn:focus-visible {
+  outline: 2px solid #35c7d8;
+  outline-offset: 2px;
+}
+.ui-close svg { width: 17px; height: 17px; }
 .ui-header {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  padding: 32px 24px 20px;
+  gap: 16px;
+  padding: 28px 64px 22px 28px;
+  border-bottom: 1px solid rgba(16, 126, 196, 0.12);
 }
 .ui-avatar {
-  width: 56px; height: 56px;
-  background: linear-gradient(135deg, rgba(0, 150, 220, 0.3), rgba(0, 80, 160, 0.5));
-  border: 2px solid rgba(77, 208, 225, 0.3);
+  flex: 0 0 auto;
+  width: 52px;
+  height: 52px;
+  background: rgba(22, 199, 232, 0.1);
+  border: 1px solid rgba(22, 199, 232, 0.35);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 12px;
+  box-shadow: 0 0 0 5px rgba(22, 199, 232, 0.05);
 }
-.ui-avatar svg { width: 28px; height: 28px; color: #4dd0e1; }
+.ui-avatar svg { width: 25px; height: 25px; color: #35c7d8; }
 .ui-title {
-  font-size: 18px;
-  font-weight: 700;
-  color: #e0f4ff;
-  letter-spacing: 1px;
+  font-size: 20px;
+  line-height: 1.2;
+  font-weight: 650;
+  color: #0d1b2d;
+  letter-spacing: 0;
 }
 .ui-body {
-  padding: 0 24px 20px;
-  display: flex;
-  flex-direction: column;
+  padding: 24px 28px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 .ui-row {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  background: rgba(0, 60, 120, 0.15);
-  border: 1px solid rgba(0, 120, 180, 0.15);
-  border-radius: 8px;
+  min-width: 0;
+  min-height: 72px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 16px;
+  background: #f4f9fd;
+  border: 1px solid rgba(16, 126, 196, 0.12);
+  border-radius: 6px;
+  transition: border-color 0.2s, background 0.2s;
+}
+.ui-row:hover {
+  background: #edf8ff;
+  border-color: rgba(0, 141, 230, 0.26);
 }
 .ui-label {
-  font-size: 13px;
-  color: rgba(140, 200, 230, 0.7);
+  font-size: 12px;
+  line-height: 1;
+  color: #60748a;
 }
 .ui-value {
+  max-width: 100%;
   font-size: 14px;
+  line-height: 1.35;
   font-weight: 600;
-  color: #d0eaf8;
+  color: #152a40;
+  overflow-wrap: anywhere;
 }
 .ui-footer {
-  padding: 0 24px 24px;
+  padding: 0 28px 28px;
 }
 .ui-logout-btn {
   width: 100%;
-  height: 44px;
+  height: 46px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: rgba(200, 50, 50, 0.15);
-  border: 1px solid rgba(220, 80, 80, 0.3);
-  border-radius: 10px;
-  color: #ff8080;
+  background: rgba(229, 72, 77, 0.06);
+  border: 1px solid rgba(229, 72, 77, 0.24);
+  border-radius: 6px;
+  color: #cf343b;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: color 0.2s, background 0.2s, border-color 0.2s, transform 0.2s;
 }
 .ui-logout-btn:hover {
-  background: rgba(200, 50, 50, 0.3);
-  border-color: rgba(220, 80, 80, 0.6);
-  color: #ffb0b0;
+  background: rgba(229, 72, 77, 0.12);
+  border-color: rgba(229, 72, 77, 0.42);
+  color: #b9272e;
+  transform: translateY(-1px);
 }
 .ui-logout-btn svg { width: 18px; height: 18px; }
+
+@media (max-width: 420px) {
+  .user-info-overlay { padding: 16px; }
+  .ui-header { padding: 24px 56px 20px 22px; }
+  .ui-body {
+    grid-template-columns: 1fr;
+    padding: 20px 22px;
+  }
+  .ui-row {
+    min-height: 0;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .ui-value { text-align: right; }
+  .ui-footer { padding: 0 22px 22px; }
+}
 </style>
 
 <style>
