@@ -782,17 +782,15 @@ function initThreeScene() {
       // Re-apply custom brightness if set
       if (entry.group.userData._customBrightness != null) {
         const b = entry.group.userData._customBrightness
-        if (b === 0) {
-          entry.group.userData.lightState = 'off'
-          applyLightState(entry, 'off')
-        } else {
-          entry.group.userData.lightState = 'on'
-          applyLightState(entry, 'on')
-          const factor = b / 100
-          if (entry.ptLight) entry.ptLight.intensity = 4 * factor
-          if (entry.disk) entry.disk.material.opacity = 0.18 * factor
-          if (entry.bulb) entry.bulb.material.emissiveIntensity = 8 * factor
-        }
+        const isOff = b === 0
+        entry.group.userData.lightState = isOff ? 'off' : 'on'
+        applyLightState(entry, isOff ? 'off' : 'on')
+        const factor = b / 100
+        if (entry.ptLight) entry.ptLight.intensity = isOff ? 0 : 4 * factor
+        if (entry.disk) entry.disk.material.opacity = isOff ? 0 : 0.18 * factor
+        if (entry.bulb) entry.bulb.material.emissiveIntensity = isOff ? 0 : 8 * factor
+        if (entry.base) { entry.base.material.emissiveIntensity = isOff ? 0.02 : 0.8; entry.base.material.opacity = isOff ? 0.35 : 1.0 }
+        if (entry.baseGlow) { entry.baseGlow.material.opacity = isOff ? 0.02 : 0.5 }
       }
     }
 
@@ -870,25 +868,28 @@ function initThreeScene() {
   }
   highlight3D = (id) => { highlightDevice3D(id) }
 
-  // Device light control (brightness → 3D bulb intensity)
+  // Device light control (brightness → 3D bulb + base intensity)
   function applyDeviceBrightness(deviceId, brightness) {
     const entry = deviceObjectMap.get(deviceId)
     if (!entry) { console.warn('[3D] device not found:', deviceId); return }
     const pct = Math.max(0, Math.min(100, brightness))
     entry.group.userData._customBrightness = pct
-    if (pct === 0) {
-      entry.group.userData.lightState = 'off'
-      applyLightState(entry, 'off')
-      return
-    }
-    entry.group.userData.lightState = 'on'
-    applyLightState(entry, 'on')
-    // Scale bulb/pointlight/disk by brightness percentage
+    const isOff = pct === 0
+    entry.group.userData.lightState = isOff ? 'off' : 'on'
+    applyLightState(entry, isOff ? 'off' : 'on')
+    // Scale pointlight/disk/bulb by brightness
     const factor = pct / 100
-    if (entry.ptLight) { entry.ptLight.intensity = 4 * factor }
-    if (entry.disk) { entry.disk.material.opacity = 0.18 * factor }
-    // Bulb brightness override (applyLightState sets emissiveIntensity to 8, we override)
-    if (entry.bulb) { entry.bulb.material.emissiveIntensity = 8 * factor }
+    if (entry.ptLight) { entry.ptLight.intensity = isOff ? 0 : 4 * factor }
+    if (entry.disk) { entry.disk.material.opacity = isOff ? 0 : 0.18 * factor }
+    if (entry.bulb) { entry.bulb.material.emissiveIntensity = isOff ? 0 : 8 * factor }
+    // Also dim base hex when off (user-visible feedback)
+    if (entry.base) {
+      entry.base.material.emissiveIntensity = isOff ? 0.02 : 0.8
+      entry.base.material.opacity = isOff ? 0.35 : 1.0
+    }
+    if (entry.baseGlow) {
+      entry.baseGlow.material.opacity = isOff ? 0.02 : 0.5
+    }
   }
   setDeviceLight3D = (deviceId, brightness) => { applyDeviceBrightness(deviceId, brightness) }
 
@@ -912,10 +913,14 @@ function initThreeScene() {
         applyLightState(entry, ls)
         // Re-apply custom brightness
         if (entry.group.userData._customBrightness != null && ls === 'on') {
-          const factor = entry.group.userData._customBrightness / 100
+          const b = entry.group.userData._customBrightness
+          const factor = b / 100
           if (entry.ptLight) entry.ptLight.intensity = 4 * factor
           if (entry.disk) entry.disk.material.opacity = 0.18 * factor
           if (entry.bulb) entry.bulb.material.emissiveIntensity = 8 * factor
+        } else if (entry.group.userData._customBrightness === 0) {
+          if (entry.base) { entry.base.material.emissiveIntensity = 0.02; entry.base.material.opacity = 0.35 }
+          if (entry.baseGlow) { entry.baseGlow.material.opacity = 0.02 }
         }
       }
     })
