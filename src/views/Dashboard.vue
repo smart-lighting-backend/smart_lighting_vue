@@ -44,17 +44,19 @@ function goToDeviceDetail(deviceId) {
 }
 async function handlePopupControl(action, brightness) {
   if (controlLoading.value || !popupDevice.value) return
+  const did = popupDevice.value.deviceId
   controlLoading.value = true
   try {
-    await controlDevice(popupDevice.value.deviceId, { action, brightness })
+    await controlDevice(did, { action, brightness })
     if (action === 'ON') popupDevice.value._brightness = 100
     else if (action === 'OFF') popupDevice.value._brightness = 0
     else if (action === 'DIMMING') popupDevice.value._brightness = brightness
     // Sync 3D light state
-    console.log('[popup] control:', popupDevice.value.deviceId, action, brightness, 'setDeviceLight3D:', !!setDeviceLight3D)
-    setDeviceLight3D?.(popupDevice.value.deviceId, action === 'OFF' ? 0 : (brightness || 100))
+    const bVal = action === 'OFF' ? 0 : (brightness || 100)
+    console.log('[popup] control:', did, action, '→ brightness:', bVal, 'setDeviceLight3D:', !!setDeviceLight3D)
+    setDeviceLight3D?.(did, bVal)
     ElMessage.success(action === 'ON' ? '已开灯' : action === 'OFF' ? '已关灯' : `亮度已调至 ${brightness}%`)
-  } catch (_) { /* silent */ }
+  } catch (e) { console.error('[popup] control error:', e) }
   finally { controlLoading.value = false }
 }
 
@@ -890,6 +892,7 @@ function initThreeScene() {
     if (entry.baseGlow) {
       entry.baseGlow.material.opacity = isOff ? 0.02 : 0.5
     }
+    console.log('[3D] applyDeviceBrightness:', deviceId, '→', pct + '%', 'isOff:', isOff, 'entry:', !!entry)
   }
   setDeviceLight3D = (deviceId, brightness) => { applyDeviceBrightness(deviceId, brightness) }
 
