@@ -53,11 +53,46 @@ async function safeCall(apiFn, mockData, endpoint) {
   }
 }
 
-// ── 策略列表 GET /api/policies ─────────────────────────────────────────────
-export function fetchStrategyList(query = { page: 1, size: 20 }) {
+// ── 策略列表 GET /api/policies（返回全量列表，前端做客户端过滤与分页）───────
+export function fetchStrategyList(query = { pageNum: 1, pageSize: 20 }) {
+  const pageNum  = query.pageNum  || query.page  || 1
+  const pageSize = query.pageSize || query.size  || 20
+
   return safeCall(
-    () => request.get('/api/policies', { params: query }),
-    { records: MOCK_POLICIES, total: MOCK_POLICIES.length },
+    async () => {
+      const res = await request.get('/api/policies')
+      // 后端返回 { code, msg, data: LightingPolicy[] }，res 已被拦截器解包为响应体
+      // 取数组后做客户端过滤与分页，保持与分页接口一致的返回格式
+      let list = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : [])
+
+      // 客户端过滤
+      if (query.name)       list = list.filter(p => (p.name || '').includes(query.name))
+      if (query.policyType) list = list.filter(p => p.policyType === query.policyType)
+      if (query.enabled !== undefined && query.enabled !== null) {
+        list = list.filter(p => p.enabled === query.enabled)
+      }
+      if (query.priorityMin != null) list = list.filter(p => (p.priority ?? 100) >= query.priorityMin)
+      if (query.priorityMax != null) list = list.filter(p => (p.priority ?? 100) <= query.priorityMax)
+
+      const total = list.length
+      const start = (pageNum - 1) * pageSize
+      const paged = list.slice(start, start + pageSize)
+
+      // 统一返回分页格式，供 Strategy.vue 直接使用
+      return {
+        code: 200,
+        data: { records: paged, total, size: pageSize, current: pageNum, pages: Math.max(1, Math.ceil(total / pageSize)) },
+      }
+    },
+    (() => {
+      let list = [...MOCK_POLICIES]
+      if (query.name)       list = list.filter(p => p.name.includes(query.name))
+      if (query.policyType) list = list.filter(p => p.policyType === query.policyType)
+      if (query.enabled !== undefined && query.enabled !== null) list = list.filter(p => p.enabled === query.enabled)
+      const total = list.length
+      const start = (pageNum - 1) * pageSize
+      return { records: list.slice(start, start + pageSize), total, size: pageSize, current: pageNum, pages: Math.max(1, Math.ceil(total / pageSize)) }
+    })(),
     'GET /api/policies'
   )
 }
@@ -96,12 +131,13 @@ export function deleteStrategy(id) {
 
 // ── 启用/禁用策略 PUT /api/policies/{id}/toggle ───────────────────────────
 /**
+ * 后端 toggle 接口会自动取反 enabled，不需要传 body，直接 PUT 即可。
  * @param {number} id
- * @param {boolean} enabled  是否启用
+ * @param {boolean} enabled  当前期望状态（仅用于 Mock 降级的返回值）
  */
 export function toggleStrategy(id, enabled) {
   return safeCall(
-    () => request.put(`/api/policies/${id}/toggle`, { enabled }),
+    () => request.put(`/api/policies/${id}/toggle`),
     { id, enabled },
     `PUT /api/policies/${id}/toggle`
   )

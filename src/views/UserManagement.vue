@@ -106,10 +106,17 @@ const isSuperAdmin = (row) => row.roleCode === 'SUPER_ADMIN'
 const loadRoles = async () => {
   try {
     const res = await fetchAllRoles()
-    if (res && res.code === 200) {
-      roleList.value = res.data
+    // fetchAllRoles 返回的是已处理的 data，可能是数组或分页对象
+    if (Array.isArray(res)) {
+      roleList.value = res
+    } else if (res && Array.isArray(res.records)) {
+      roleList.value = res.records
+    } else if (res && Array.isArray(res.list)) {
+      roleList.value = res.list
+    } else if (res && typeof res === 'object') {
+      roleList.value = Object.values(res).find(v => Array.isArray(v)) || []
     } else {
-      roleList.value = res || []
+      roleList.value = []
     }
   } catch (error) {
     console.error('获取角色失败', error)

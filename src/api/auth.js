@@ -149,6 +149,13 @@ export function isLoggedIn() {
   return !!getToken()
 }
 
+/**
+ * 判断是否为 Mock 登录返回的 Token
+ */
+export function isMockAuthToken(token) {
+  return typeof token === 'string' && token.startsWith('mock-token-dev-')
+}
+
 // ────────────────────────── 角色工具 ─────────────────────────────────────
 
 /** 角色编码 → 中文名映射 */

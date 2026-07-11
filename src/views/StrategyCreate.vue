@@ -6,7 +6,8 @@ import { ElMessage } from 'element-plus'
 
 const route = useRoute()
 const router = useRouter()
-const groups = ref([])
+const DEFAULT_GROUPS = ['主干道节能组', '景观灯组', '全域组', '园区灯组', '校区灯组']
+const groups = ref([...DEFAULT_GROUPS])
 const saving = ref(false)
 const saveSuccess = ref(false)
 const isEdit = ref(false)
@@ -14,6 +15,11 @@ const testVisible = ref(false)
 const testLoading = ref(false)
 const testResult = ref(null)
 const hasAnyHit = computed(() => testResult.value?.allResults?.some(r => r.hit) || testResult.value?.matched)
+const POLICY_TYPES = [
+  { value: 'TIME', label: '时间策略' },
+  { value: 'SENSOR', label: '传感策略' },
+  { value: 'SCENE', label: '场景策略' },
+]
 const testInput = reactive({
   illuminance: 20, temperature: 26, humidity: 60,
   pir: 0, trafficFlow: 5, currentTime: '23:00'
@@ -93,6 +99,9 @@ function mapOldCondition(key, val) {
 
 const form = reactive({
   name: '',
+  policyType: 'SCENE',
+  priority: 50,
+  enabled: true,
   group: '',
   startTime: '',
   endTime: '',
@@ -145,13 +154,17 @@ function unusedConditions() {
 
 async function loadPolicyData() {
   const res = await fetchStrategyGroups()
-  groups.value = res.data || []
-  if (groups.value.length) form.group = groups.value[0]
+  const remoteGroups = Array.isArray(res?.data) ? res.data.filter(Boolean) : []
+  groups.value = [...new Set([...DEFAULT_GROUPS, ...remoteGroups])]
+  if (!form.group || !groups.value.includes(form.group)) form.group = groups.value[0]
 
   // 重置表单
   if (!route.params.id) {
     isEdit.value = false
     form.name = ''
+    form.policyType = 'SCENE'
+    form.priority = 50
+    form.enabled = true
     form.startTime = ''
     form.endTime = ''
     form.actions = {
@@ -171,10 +184,16 @@ async function loadPolicyData() {
   if (detailRes && detailRes.data) {
     const data = detailRes.data
     form.name = data.name || ''
+    form.policyType = data.policyType || 'SCENE'
+    form.priority = data.priority ?? 50
+    form.enabled = data.enabled ?? true
     if (data.conditions && typeof data.conditions === 'string') {
       try {
         const cond = JSON.parse(data.conditions)
-        if (cond.group) form.group = cond.group
+        if (cond.group) {
+          if (!groups.value.includes(cond.group)) groups.value.push(cond.group)
+          form.group = cond.group
+        }
         // 兼容 time_range（新格式）和 startTime/endTime（旧格式）
         if (cond.time_range && typeof cond.time_range === 'string') {
           const parts = cond.time_range.split('-')
@@ -242,6 +261,7 @@ watch(() => route.params.id, () => { if (route.params.id) loadPolicyData() })
 
 async function saveStrategy() {
   if (!form.name.trim()) return alert('请输入策略名称')
+  if (!form.policyType) return alert('请选择策略类型')
   saving.value = true
 
   let actionStr
@@ -276,7 +296,9 @@ async function saveStrategy() {
 
   const payload = {
     name: form.name,
-    policyType: 'SCENE',
+    policyType: form.policyType,
+    priority: form.priority,
+    enabled: form.enabled,
     conditions: JSON.stringify(conditionsObj),
     action: actionStr,
     effectiveTime: (form.startTime && form.endTime) ? `${form.startTime}-${form.endTime}` : '全天',
@@ -331,6 +353,26 @@ async function saveStrategy() {
             </select>
           </div>
           <div class="field-group">
+            <label>策略类型</label>
+            <select v-model="form.policyType" class="field-select">
+              <option v-for="type in POLICY_TYPES" :key="type.value" :value="type.value">
+                {{ type.label }}（{{ type.value }}）
+              </option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label>优先级</label>
+            <input v-model.number="form.priority" class="field-input" type="number" min="1" max="100" placeholder="1-100，数值越小优先级越高" />
+            <span class="field-hint">数值越小，策略匹配时越优先执行</span>
+          </div>
+          <div class="field-group">
+            <label>启用状态</label>
+            <label class="status-switch-row">
+              <input v-model="form.enabled" type="checkbox" class="status-checkbox" />
+              <span class="status-switch" :class="{ on: form.enabled }"><span></span></span>
+              <span class="status-text">{{ form.enabled ? '保存后立即启用' : '保存后保持停用' }}</span>
+            </label>
+          </div>          <div class="field-group">
             <label>生效开始时间</label>
             <div class="time-input-wrap">
               <input v-model="form.startTime" class="field-input" type="time" />
@@ -587,6 +629,14 @@ async function saveStrategy() {
   appearance: auto;
 }
 .time-input-wrap { position: relative; }
+.field-hint { color: #71869c; font-size: 11px; font-weight: 600; line-height: 1.4; }
+.status-switch-row { min-height: 40px; display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.status-checkbox { position: absolute; opacity: 0; pointer-events: none; }
+.status-switch { width: 42px; height: 23px; padding: 3px; border-radius: 999px; background: #c8d5e1; transition: background 0.2s, box-shadow 0.2s; }
+.status-switch span { display: block; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(30, 60, 90, 0.25); transition: transform 0.2s; }
+.status-switch.on { background: linear-gradient(135deg, #008de6, #17c9df); box-shadow: 0 0 0 3px rgba(0, 141, 230, 0.1); }
+.status-switch.on span { transform: translateX(19px); }
+.status-text { color: #40566f; font-size: 12px; font-weight: 750; }
 
 /* Conditions */
 .condition-card {
@@ -768,7 +818,13 @@ async function saveStrategy() {
 
 /* White sci-fi refresh for the strategy editor */
 .strategy-create-page {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  overflow-y: auto;
+  overflow-x: hidden;
   color: #1d3148;
+  scrollbar-gutter: stable;
 }
 
 .page-header {
@@ -1301,3 +1357,7 @@ async function saveStrategy() {
   }
 }
 </style>
+
+
+
+

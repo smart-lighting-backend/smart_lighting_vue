@@ -99,6 +99,10 @@ function activeMockDevices() {
   return mockDevices.filter(d => !d.deleted)
 }
 
+export function getMockDeviceSnapshot() {
+  return activeMockDevices().map(device => ({ ...device }))
+}
+
 function deviceListUsesMock() {
   return Boolean(
     mockStore.details['POST /api/devices/list'] ||

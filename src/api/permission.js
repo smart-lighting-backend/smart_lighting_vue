@@ -9,6 +9,7 @@
  * DELETE /api/permissions/{id}    → 删除
  */
 import request from './request.js'
+import { adminSafeCall, MOCK_PERMISSIONS } from './adminMock.js'
 
 /**
  * 权限树（可选 roleId 参数）
@@ -16,17 +17,29 @@ import request from './request.js'
  */
 export function fetchPermissionTree(roleId) {
   const params = roleId ? { roleId } : {}
-  return request.get('/api/permissions/tree', { params })
+  return adminSafeCall(
+    () => request.get('/api/permissions/tree', { params }),
+    () => buildPermissionTree(roleId),
+    'GET /api/permissions/tree'
+  )
 }
 
 /** 扁平列表 */
 export function fetchPermissionList() {
-  return request.get('/api/permissions')
+  return adminSafeCall(
+    () => request.get('/api/permissions'),
+    () => MOCK_PERMISSIONS,
+    'GET /api/permissions'
+  )
 }
 
 /** 详情 */
 export function fetchPermissionById(id) {
-  return request.get(`/api/permissions/${id}`)
+  return adminSafeCall(
+    () => request.get(`/api/permissions/${id}`),
+    () => MOCK_PERMISSIONS.find(permission => Number(permission.id) === Number(id)) || null,
+    `GET /api/permissions/${id}`
+  )
 }
 
 /** 新增权限 */
@@ -42,4 +55,21 @@ export function updatePermission(id, data) {
 /** 删除权限 */
 export function deletePermission(id) {
   return request.delete(`/api/permissions/${id}`)
+}
+
+function buildPermissionTree(roleId) {
+  const checkedIds = new Set()
+  if (roleId) {
+    MOCK_PERMISSIONS.forEach(permission => checkedIds.add(permission.id))
+  }
+
+  const build = (parentId = null) => MOCK_PERMISSIONS
+    .filter(permission => (permission.parentId ?? null) === parentId)
+    .map(permission => ({
+      ...permission,
+      checked: checkedIds.has(permission.id),
+      children: build(permission.id),
+    }))
+
+  return build(null)
 }

@@ -28,7 +28,7 @@ import {
   Document,
   Delete
 } from '@element-plus/icons-vue';
-import { fetchAlarmDetail, updateAlarmStatus, getAlarmStatuses, deleteAlarm } from '../api/alarm';
+import { fetchAlarmDetail, handleAlarm, deleteAlarm, ALARM_STATUS_MAP, ALARM_LEVEL_MAP, ALARM_TYPE_MAP } from '../api/alarm';
 import { useUserInfo } from '../composables/useUserInfo.js';
 
 const { hasPerm } = useUserInfo();
@@ -60,18 +60,19 @@ const typeConfig = {
   illuminance: { color: 'warning', text: '光照异常' }
 };
 
-const alarmStatuses = getAlarmStatuses();
 const handleRemark = ref('');
 
 async function loadAlarmDetail() {
   const alarmId = route.params.id;
   loading.value = true;
   try {
-    const response = await fetchAlarmDetail(alarmId);
-    if (response.code === 200) {
-      alarmDetail.value = response.data;
+    const response = await fetchAlarmDetail(Number(alarmId) || alarmId);
+    // 兼容 { code, data } 和直接返回数据两种格式
+    const data = response?.data ?? response
+    if (data) {
+      alarmDetail.value = data;
     } else {
-      ElMessage.error(response.message);
+      ElMessage.error('未找到该告警记录');
     }
   } catch (error) {
     ElMessage.error('加载告警详情失败');
@@ -81,24 +82,20 @@ async function loadAlarmDetail() {
 }
 
 function goBack() {
-  router.push('/alarm/list');
+  router.push('/warning');
 }
 
-async function handleStatusChange(status) {
+async function handleStatusChange(newStatus) {
   const alarmId = route.params.id;
   const currentStatus = alarmDetail.value?.status;
-  
-  if (currentStatus === status) {
+
+  if (currentStatus === newStatus) {
     ElNotification.info({ title: '状态提示', message: '当前状态已是该值' });
     return;
   }
 
-  let confirmMessage = '';
-  if (status === 'processing') {
-    confirmMessage = '确认开始处理此告警？';
-  } else if (status === 'handled') {
-    confirmMessage = '确认此告警已处理完成？';
-  }
+  const statusLabels = { ACKNOWLEDGED: '处理中', RECOVERED: '已处理' };
+  const confirmMessage = `确认将告警状态改为「${statusLabels[newStatus] || newStatus}」吗？`;
 
   try {
     await ElMessageBox.confirm(confirmMessage, '提示', {
@@ -107,15 +104,17 @@ async function handleStatusChange(status) {
       type: 'warning'
     });
 
-    const response = await updateAlarmStatus(alarmId, status, handleRemark.value);
-    if (response.code === 200) {
-      ElNotification.success({ title: '操作成功', message: `告警状态已更新为 ${status}` });
-      handleRemark.value = '';
-      loadAlarmDetail();
-    }
+    // 使用实际存在的 handleAlarm 接口（PUT /api/alarms/{id}/handle）
+    await handleAlarm(Number(alarmId) || alarmId, {
+      handler: '当前用户',
+      remark: handleRemark.value
+    });
+    ElNotification.success({ title: '操作成功', message: `告警状态已更新` });
+    handleRemark.value = '';
+    loadAlarmDetail();
   } catch (error) {
     if (error !== 'cancel') {
-      ElNotification.error({ title: '操作失败', message: '' });
+      ElNotification.error({ title: '操作失败', message: error?.message || '' });
     }
   }
 }
@@ -127,11 +126,9 @@ async function handleDeleteAlarm() {
       '删除确认',
       { confirmButtonText: '确定删除', cancelButtonText: '取消', type: 'warning' }
     );
-    const res = await deleteAlarm(alarmDetail.value.id);
-    if (res.code === 200) {
-      ElNotification.success({ title: '告警已删除', message: `告警 #${alarmDetail.value.id} 已删除` });
-      router.push('/alarm/list');
-    }
+    await deleteAlarm(alarmDetail.value.id);
+    ElNotification.success({ title: '告警已删除', message: `告警 #${alarmDetail.value.id} 已删除` });
+    router.push('/warning');
   } catch (err) {
     if (err !== 'cancel') ElNotification.error({ title: '删除失败', message: '' });
   }

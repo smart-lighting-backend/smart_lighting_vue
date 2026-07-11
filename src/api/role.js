@@ -10,15 +10,24 @@
  * GET    /api/roles/permissions    → 权限选项
  */
 import request from './request.js'
+import { adminSafeCall, getMockRoleById, getMockRoles, MOCK_PERMISSIONS, setMockRolePermissions } from './adminMock.js'
 
 /** 角色列表 */
 export function fetchRoleList() {
-  return request.get('/api/roles')
+  return adminSafeCall(
+    () => request.get('/api/roles'),
+    () => getMockRoles(),
+    'GET /api/roles'
+  )
 }
 
 /** 角色详情 */
 export function fetchRoleById(id) {
-  return request.get(`/api/roles/${id}`)
+  return adminSafeCall(
+    () => request.get(`/api/roles/${id}`),
+    () => getMockRoleById(id),
+    `GET /api/roles/${id}`
+  )
 }
 
 /** 新增角色 */
@@ -38,5 +47,17 @@ export function deleteRole(id) {
 
 /** 分配角色权限（权限 ID 列表） */
 export function assignRolePermissions(id, permissionIds) {
-  return request.put(`/api/roles/${id}/permissions`, { permissionIds })
+  return adminSafeCall(
+    () => request.put(`/api/roles/${id}/permissions`, { permissionIds }),
+    () => setMockRolePermissions(id, permissionIds),
+    `PUT /api/roles/${id}/permissions`
+  )
+}
+
+export function fetchRolePermissions() {
+  return adminSafeCall(
+    () => request.get('/api/roles/permissions'),
+    () => MOCK_PERMISSIONS,
+    'GET /api/roles/permissions'
+  )
 }

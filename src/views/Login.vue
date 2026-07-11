@@ -37,8 +37,41 @@ const registerError = ref('')
 const registerLoading = ref(false)
 const roleList = ref([])
 const roleDropdownOpen = ref(false)
+const BACKEND_OFFLINE_KEY = 'smart_light_backend_offline'
+const backendOffline = ref(sessionStorage.getItem(BACKEND_OFFLINE_KEY) === '1')
+const DEFAULT_REGISTER_ROLES = [
+  { id: 2, name: '市政人员', roleCode: 'MUNICIPAL' },
+  { id: 3, name: '路灯管理员', roleCode: 'MAINTENANCE' },
+  { id: 4, name: '安全/应急人员', roleCode: 'EMERGENCY' },
+]
+
+function markBackendOffline() {
+  if (!import.meta.env.DEV) return
+  backendOffline.value = true
+  sessionStorage.setItem(BACKEND_OFFLINE_KEY, '1')
+}
+
+function markBackendOnline() {
+  backendOffline.value = false
+  sessionStorage.removeItem(BACKEND_OFFLINE_KEY)
+}
+
+function isBackendUnavailableError(err) {
+  const httpStatus = err?.response?.status
+  const code = err?.code || ''
+  const message = err?.message || ''
+  return (
+    (!err?.response && !err?.bizCode) ||
+    (httpStatus != null && httpStatus >= 500) ||
+    ['ERR_NETWORK', 'ECONNABORTED', 'ECONNREFUSED'].includes(code) ||
+    /ECONNREFUSED|Network Error|timeout|proxy error/i.test(message)
+  )
+}
 
 async function loadRoles() {
+  if (backendOffline.value) {
+    roleList.value = roleList.value.length ? roleList.value : DEFAULT_REGISTER_ROLES
+  }
   // 先加载缓存（上次登录时保存的），让下拉框即时有数据
   const cached = localStorage.getItem('smart_light_register_roles')
   if (cached) {
@@ -70,21 +103,18 @@ async function loadRoles() {
       return code !== 'SUPER_ADMIN'
     })
     if (filtered.length > 0) {
+      markBackendOnline()
       roleList.value = filtered
       localStorage.setItem('smart_light_register_roles', JSON.stringify(filtered))
       return
     }
-  } catch {
+  } catch (err) {
+    if (isBackendUnavailableError(err)) markBackendOffline()
     // API 调用失败，走下面的兜底
   }
   // 兜底：无缓存也无 API 数据时用默认值
   if (!cached) {
-    const fallback = [
-      { id: 2, name: '市政人员', roleCode: 'MUNICIPAL' },
-      { id: 3, name: '路灯管理员', roleCode: 'MAINTENANCE' },
-      { id: 4, name: '安全/应急人员', roleCode: 'EMERGENCY' },
-    ]
-    roleList.value = fallback
+    roleList.value = DEFAULT_REGISTER_ROLES
   }
 }
 
@@ -327,11 +357,12 @@ async function handleLogin() {
   loading.value = true
   try {
     let token, userInfo
+    let usedMock = false
 
     try {
-      // ① 调用真实后端：POST /api/auth/login { username, password }
+      // 始终优先尝试真实后端，避免一次离线后被 sessionStorage 固定在 Mock 登录。
       const res = await login(form.username, form.password)
-      // res = { code: 200, msg: 'success', data: { token, username, roleCode, permissions, menus } }
+      markBackendOnline()
       token    = res.data.token
       userInfo = {
         username: res.data.username,
@@ -342,17 +373,15 @@ async function handleLogin() {
         roleName: res.data.roleName || getRoleLabel(res.data.roleCode),
       }
       if (!token) throw new Error('未收到有效 Token')
-      // 保存权限列表和菜单树
       savePermissions(res.data.permissions || [], form.remember)
       saveMenus(res.data.menus || [], form.remember)
     } catch (apiErr) {
       // ② 判断"后端不可用"：网络连接失败 或 服务器 5xx 错误 → Mock 降级
       //    业务错误（401 密码错误、400 参数错误）→ 直接抛出显示给用户
-      const httpStatus   = apiErr?.response?.status
-      const isNetworkErr = !apiErr?.response && !apiErr?.bizCode   // 完全无法连接
-      const isServerErr  = httpStatus != null && httpStatus >= 500 // 服务器内部错误
-      if (isNetworkErr || isServerErr) {
+      if (isBackendUnavailableError(apiErr)) {
+        markBackendOffline()
         console.warn('[Login] 后端不可用，使用 Mock 降级登录', apiErr?.message)
+        usedMock = true
         const mock = mockLogin(form.username)
         token    = mock.token
         userInfo = mock.userInfo
@@ -367,7 +396,7 @@ async function handleLogin() {
     saveAuth(token, userInfo, form.remember)
     markAuthFresh()
     // 登录后获取最新角色列表并缓存，供下次注册时使用
-    fetchRoleList().then(res => {
+    if (!usedMock) fetchRoleList().then(res => {
       let roles = []
       const raw = res?.data
       if (Array.isArray(raw)) roles = raw
@@ -376,7 +405,9 @@ async function handleLogin() {
       else if (Array.isArray(res)) roles = res
       const filtered = roles.filter(r => (r?.roleCode || r?.code || '') !== 'SUPER_ADMIN')
       if (filtered.length > 0) localStorage.setItem('smart_light_register_roles', JSON.stringify(filtered))
-    }).catch(() => {})
+    }).catch(err => {
+      if (isBackendUnavailableError(err)) markBackendOffline()
+    })
     const redirect = route.query.redirect || '/dashboard'
     router.push(redirect)
   } catch (err) {

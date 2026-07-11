@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { ref, onMounted, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchStrategyList, fetchStrategyHistory, toggleStrategy, deleteStrategy, testStrategy } from '../api/strategy.js'
@@ -15,7 +15,16 @@ const historyVisible = ref(false)
 const historyLoading = ref(false)
 const historyData = ref(null)
 const historyPolicyName = ref('')
+const POLICY_TYPE_LABELS = {
+  TIME: '时间策略',
+  SENSOR: '传感策略',
+  SCENE: '场景策略',
+}
 
+function formatPolicyType(policyType) {
+  if (!policyType) return '未设置类型'
+  return POLICY_TYPE_LABELS[policyType] ? `${POLICY_TYPE_LABELS[policyType]}（${policyType}）` : policyType
+}
 async function showHistory(s) {
   historyPolicyName.value = s.name
   historyVisible.value = true
@@ -54,40 +63,41 @@ async function loadData() {
   
   try {
     const res = await fetchStrategyList(query)
-    if (res && res.data) {
-      const list = Array.isArray(res.data) ? res.data : (res.data.records || res.data.list || [])
-      strategies.value = list.map(item => {
-        let group = '', startTime = '', endTime = ''
-        if (item.conditions && typeof item.conditions === 'string') {
-          try {
-            const cond = JSON.parse(item.conditions)
-            if (cond.group) group = cond.group
-            // 优先 time_range，其次 startTime/endTime（空值表示全天）
-            if (cond.time_range && cond.time_range !== '-') {
-              const parts = cond.time_range.split('-')
-              if (parts.length === 2) { startTime = parts[0]; endTime = parts[1] }
-            } else {
-              if (cond.startTime && cond.startTime !== '') startTime = cond.startTime
-              if (cond.endTime && cond.endTime !== '') endTime = cond.endTime
-            }
-          } catch (e) {}
-        }
-        // 回退：用 effective_time 字段
-        const timeDisplay = (startTime && endTime) ? `${startTime} — ${endTime}`
-          : (item.effectiveTime ? item.effectiveTime : '全天')
-        const groupDisplay = group || item.policyType || ''
-        return {
-          ...item,
-          groupDisplay,
-          timeDisplay,
-          lastTrigger: item.lastTriggerTime || item.lastTrigger || '--',
-          triggerCount: item.triggerCount || 0
-        }
-      })
-      total.value = Array.isArray(res.data) ? res.data.length : (res.data.total || 0)
-    } else {
-      strategies.value = Array.isArray(res) ? res : []
-    }
+    const resData = res?.data || res || {}
+    const list = Array.isArray(resData) ? resData
+      : Array.isArray(resData.records) ? resData.records
+      : Array.isArray(resData.list) ? resData.list
+      : []
+    strategies.value = list.map(item => {
+      let group = '', startTime = '', endTime = ''
+      if (item.conditions && typeof item.conditions === 'string') {
+        try {
+          const cond = JSON.parse(item.conditions)
+          if (cond.group) group = cond.group
+          // 优先 time_range，其次 startTime/endTime（空值表示全天）
+          if (cond.time_range && cond.time_range !== '-') {
+            const parts = cond.time_range.split('-')
+            if (parts.length === 2) { startTime = parts[0]; endTime = parts[1] }
+          } else {
+            if (cond.startTime && cond.startTime !== '') startTime = cond.startTime
+            if (cond.endTime && cond.endTime !== '') endTime = cond.endTime
+          }
+        } catch (e) {}
+      }
+      // 回退：用 effective_time 字段
+      const timeDisplay = (startTime && endTime) ? `${startTime} — ${endTime}`
+        : (item.effectiveTime ? item.effectiveTime : '全天')
+      return {
+        ...item,
+        groupDisplay: group,
+        policyTypeDisplay: formatPolicyType(item.policyType),
+        timeDisplay,
+        lastTrigger: item.lastTriggerTime || item.lastTrigger || '--',
+        triggerCount: item.triggerCount || 0
+      }
+    })
+    // 从分页结构中正确读取总数
+    total.value = Array.isArray(resData) ? resData.length : (resData.total || list.length)
   } catch (error) {
     ElMessage.error(error?.message || '加载策略列表失败')
   } finally {
@@ -216,6 +226,7 @@ async function remove(s) {
         <div class="sc-left">
           <div class="sc-name">{{ s.name }}</div>
           <div class="sc-meta">
+            <span class="sc-tag type">{{ s.policyTypeDisplay }}</span>
             <span v-if="s.groupDisplay" class="sc-tag">{{ s.groupDisplay }}</span>
             <span class="sc-time">{{ s.timeDisplay }}</span>
           </div>
@@ -465,3 +476,4 @@ async function remove(s) {
 }
 .test-policy-row.hit .test-tag { background: rgba(16,185,129,0.12); color: #0d8b62; }
 </style>
+

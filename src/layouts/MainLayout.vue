@@ -1,8 +1,8 @@
-<script setup>
+﻿<script setup>
 import { ref, computed, onMounted, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserInfo } from '../composables/useUserInfo.js'
-import { clearAuth, getMenus, saveMenus, refreshPermissionsAndMenus, getUserInfo, getPermissions } from '../api/auth.js'
+import { clearAuth, getToken, getMenus, saveMenus, refreshPermissionsAndMenus, getUserInfo, getPermissions, isMockAuthToken } from '../api/auth.js'
 import { fetchAlarmPage } from '../api/warnings.js'
 import { useMqtt } from '../composables/useMqtt.js'
 import { fetchVisibleMenus } from '../api/menu.js'
@@ -61,6 +61,16 @@ async function loadMenus() {
   if (menus.value.length === 0) {
     loadingMenus.value = true
   }
+  const cached = getMenus()
+  if (isMockAuthToken()) {
+    menus.value = cached && cached.length > 0
+      ? cached.sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+      : FALLBACK_MENUS
+    filterAdminMenus()
+    autoExpandMenus()
+    loadingMenus.value = false
+    return
+  }
   try {
     const res = await fetchVisibleMenus()
 
@@ -74,7 +84,6 @@ async function loadMenus() {
       const inLocal = !!localStorage.getItem('smart_light_token')
       saveMenus(menus.value, inLocal)
     } else {
-      const cached = getMenus()
       if (cached && cached.length > 0) {
         menus.value = cached.sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
       } else {
@@ -84,7 +93,6 @@ async function loadMenus() {
     filterAdminMenus()
     autoExpandMenus()
   } catch (error) {
-    const cached = getMenus()
     if (cached && cached.length > 0) {
       menus.value = cached.sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
     } else {
@@ -246,6 +254,7 @@ provide('reloadSidebarMenus', loadMenus)
 const { subscribe: subscribeAlarm } = useMqtt()
 
 async function refreshAlarmBadge() {
+  if (isMockAuthToken(getToken())) return
   try {
     const res = await fetchAlarmPage({ status: 'ACTIVE', pageNum: 1, pageSize: 1 })
     const d = res?.data
@@ -261,7 +270,9 @@ onMounted(async () => {
   if (getPermissions().includes('alarm:read')) {
     refreshAlarmBadge()
   }
-  subscribeAlarm('system/alarms', () => refreshAlarmBadge())
+  if (!isMockAuthToken(getToken())) {
+    subscribeAlarm('system/alarms', () => refreshAlarmBadge())
+  }
 })
 
 </script>
@@ -597,6 +608,7 @@ onMounted(async () => {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  min-height: 0;
   background: #060e1f;
 }
 
@@ -686,6 +698,7 @@ onMounted(async () => {
 
 .page-content {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   background: #060e1f;
@@ -902,3 +915,4 @@ onMounted(async () => {
   opacity: 0;
 }
 </style>
+
