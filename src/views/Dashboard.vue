@@ -982,6 +982,8 @@ function initThreeScene() {
     } else {
       console.log('[3D] replaceSingleDevice:', deviceId, 'brightness:', brightness, 'lightState:', ls, 'bulb: MISSING!')
     }
+    // Force immediate render to show changes
+    if (viewMode.value === '3d') { renderer.render(scene, camera); console.log('[3D] forced render after replace') }
   }
   setDeviceLight3D = (deviceId, brightness) => { replaceSingleDevice(deviceId, brightness) }
 
@@ -1073,8 +1075,10 @@ function initThreeScene() {
   // ══════════════════════════════════════════════════════════════
   // Animation loop
   // ══════════════════════════════════════════════════════════════
+  let animating = true
   let lastTime = performance.now()
   function animate() {
+    if (!animating) return
     requestAnimationFrame(animate)
     if (viewMode.value !== '3d') return
     const now = performance.now()
@@ -1214,6 +1218,7 @@ function initThreeScene() {
   // Dispose
   // ══════════════════════════════════════════════════════════════
   threeDispose = () => {
+    animating = false
     resizeObserver.disconnect()
     renderer.domElement.removeEventListener('click', onClick)
     renderer.domElement.removeEventListener('mousemove', onMouseMove)
