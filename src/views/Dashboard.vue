@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick, inject } from 'vue'
+import { ref, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick, inject, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import * as THREE from 'three'
@@ -13,6 +13,7 @@ import { useAutoRefresh } from '../composables/useAutoRefresh.js'
 import { withCache, invalidateCache } from '../utils/requestCache.js'
 import { parseLatestData } from '../utils/manualControlState.js'
 import { getControlState, setControlState } from '../utils/controlStateStore.js'
+import { useControlSync } from '../composables/useControlSync.js'
 import DeviceMap from '../components/DeviceMap.vue'
 
 const router = useRouter()
@@ -27,6 +28,7 @@ const popupDevice = ref(null)
 const hoveredDevice = ref(null)
 const hoverTooltipStyle = ref({})
 const controlLoading = ref(false)
+let controlGeneration = 0            // 异步校准代际计数器（取消过期回调）
 function showDevicePopup(device) {
   let brightness = 100
   // 1) Custom brightness from 3D userData (most recent)
@@ -50,22 +52,28 @@ async function handlePopupControl(action, brightness) {
   if (controlLoading.value || !popupDevice.value) return
   const did = popupDevice.value.deviceId
   controlLoading.value = true
+  const gen = ++controlGeneration  // 记录本次代际，用于取消过期异步回调
   try {
     await controlDevice(did, { action, brightness })
     const bVal = action === 'OFF' ? 0 : (brightness || 100)
-    // 先更新弹窗显示
-    if (action === 'ON') popupDevice.value._brightness = 100
-    else if (action === 'OFF') popupDevice.value._brightness = 0
-    else if (action === 'DIMMING') popupDevice.value._brightness = brightness
+    // 乐观更新弹窗显示
+    if (action === 'ON') { popupDevice.value._brightness = 100; popupDevice.value.lightState = 'on' }
+    else if (action === 'OFF') { popupDevice.value._brightness = 0; popupDevice.value.lightState = 'off' }
+    else if (action === 'DIMMING') { popupDevice.value._brightness = brightness; popupDevice.value.lightState = 'on' }
     // 写入控制状态缓存
     setControlState(did, action, bVal)
-    // 拉取全量数据并全量重建设备
-    const list = await fetchAllDevicesForMap()
-    const devs = Array.isArray(list) ? list : (list?.data || list?.records || [])
-    if (devs.length > 0) {
-      allDevices.value = devs
-      if (rebuildScene3D) rebuildScene3D(devs)
-    }
+    // 立即更新 3D 场景（乐观更新，不等 API 轮询）
+    if (applyDeviceBrightness3D) applyDeviceBrightness3D(did, bVal)
+    // 异步拉取全量数据做增量校准（不阻塞 UI 反馈）
+    fetchAllDevicesForMap().then(list => {
+      // 过期回调直接丢弃，避免竟态覆盖
+      if (gen !== controlGeneration) return
+      const devs = Array.isArray(list) ? list : (list?.data || list?.records || [])
+      if (devs.length > 0) {
+        allDevices.value = devs
+        if (syncDevices3D) syncDevices3D(devs)
+      }
+    }).catch(() => {})
     ElMessage.success(action === 'ON' ? '已开灯' : action === 'OFF' ? '已关灯' : `亮度已调至 ${brightness}%`)
   } catch (e) { console.error('[popup] control error:', e) }
   finally { controlLoading.value = false }
@@ -93,6 +101,19 @@ const highlightDeviceId = ref('')
 function onMapMarkerClick(device) {
   highlightDeviceId.value = device.deviceId
   selectedArea.value = ''
+}
+
+// 分区列表（从设备数据中提取，供 3D 搜索使用）
+const areaOptions = computed(() => {
+  const areas = [...new Set(allDevices.value.map(d => d.area).filter(Boolean))]
+  return areas.sort().map(a => ({ label: a, value: a }))
+})
+
+function onAreaSelect(areaName) {
+  selectedArea.value = areaName || ''
+  if (areaName && viewMode.value === '3d') {
+    flyToArea3D?.(areaName)
+  }
 }
 
 // ═══ 能耗计算 ═══
@@ -155,6 +176,11 @@ let flyToArea3D = null     // 外部可调用的相机飞行函数
 let highlight3D = null     // 外部可调用的设备高亮函数
 let highlightArea3D = null // 外部可调用的区域高亮函数
 let setDeviceLight3D = null // 外部可调用的设备亮度函数
+let applyDeviceBrightness3D = null // 外部可调用的设备亮度增量更新（不重建mesh）
+let initialMountDone = false       // 首次挂载是否完成（防止 onActivated 竞态）
+
+// ═══ 跨标签页控制同步 ═══
+const { onControlChange } = useControlSync()
 
 // ═══ 数据加载 ═══
 async function loadAllData() {
@@ -328,8 +354,11 @@ function initBarChart(data) {
 }
 
 // ═══ Three.js 3D 场景 ═══
-function initThreeScene() {
+function initThreeScene(preloadedDevices) {
   if (!threeContainer.value) return
+  // 清理旧场景，防止重复调用创建多个渲染器
+  if (threeDispose) { threeDispose(); threeDispose = null }
+  console.log('[3D] initThreeScene called, preloadedDevices:', preloadedDevices?.length || 0)
 
   const container = threeContainer.value
   const W = container.clientWidth
@@ -510,6 +539,7 @@ function initThreeScene() {
   // ══════════════════════════════════════════════════════════════
   const deviceObjectMap = new Map()
   const areaGroups = new Map()
+  let layoutLock = false  // 防止 layoutDevices 并发重入
   const areaPlatformMap = new Map()
   let connectionLines = []
   let areaMarkerRings = []
@@ -526,11 +556,21 @@ function initThreeScene() {
   const BULB_OFF   = { color: 0x111111, emissive: 0, diskOpacity: 0 }           // light OFF
   const BULB_ALARM = { color: 0xef5350, emissive: 2.5, diskOpacity: 0.22 }      // alarm
 
-  // Determine light state: latestData.action > illuminance > default
+  // 区域高亮动画预分配颜色对象（避免每帧 GC）
+  const AREA_PULSE_COL_LO = new THREE.Color(0x1a4a6a)  // 暗蓝
+  const AREA_PULSE_COL_HI = new THREE.Color(0x4dd0e1)  // 亮青
+  const AREA_PULSE_COL_TMP = new THREE.Color()          // 临时插值结果
+
+  // Determine light state: controlStateStore > latestData.action > illuminance > default
   function getLightState(device) {
     const s = device.status != null ? device.status : 2
     if (s === 3) return 'alarm'
     if (s !== 1) return 'off'
+    // 0) 控制状态缓存（最近一次控制指令，比 API latestData 更实时）
+    const cached = getControlState(device.deviceId)
+    if (cached && (Date.now() - cached.time < 120000)) {
+      return (cached.action === 'OFF' || cached.brightness === 0) ? 'off' : 'on'
+    }
     // 1) latestData.action (from API — the authoritative source)
     const data = parseLatestData(device.latestData)
     if (data?.action) {
@@ -667,6 +707,8 @@ function initThreeScene() {
   // Layout: area-grouped clustering
   // ══════════════════════════════════════════════════════════════
   function layoutDevices(devices) {
+    if (layoutLock) { console.log('[3D] layoutDevices skipped (locked)'); return }
+    layoutLock = true
     console.log('[3D] layoutDevices start:', devices?.length, 'devices, deviceObjectMap:', deviceObjectMap.size)
     // Dispose old
     deviceObjectMap.forEach(entry => {
@@ -679,7 +721,7 @@ function initThreeScene() {
     if (highlightRing) { scene.remove(highlightRing); highlightRing.geometry.dispose(); highlightRing.material.dispose(); highlightRing = null }
     clearConnections()
     updateAreaMarkers()
-    if (!devices || devices.length === 0) return
+    if (!devices || devices.length === 0) { layoutLock = false; return }
 
     // Group by area
     const areaMap = new Map()
@@ -737,6 +779,7 @@ function initThreeScene() {
     // Re-apply area highlight after rebuild
     if (selectedArea.value) { applyAreaHighlight(selectedArea.value) }
     console.log('[3D] layoutDevices done, deviceObjectMap:', deviceObjectMap.size, 'areaGroups:', areaGroups.size)
+    layoutLock = false
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -761,9 +804,16 @@ function initThreeScene() {
     // Check if re-layout needed (new devices or area change)
     let needRelayout = false
     for (const d of newDevices) {
-      if (!deviceObjectMap.has(d.deviceId)) { needRelayout = true; break }
+      if (!deviceObjectMap.has(d.deviceId)) {
+        console.log('[3D] syncDevices: needRelayout — new device:', d.deviceId)
+        needRelayout = true; break
+      }
       const ex = deviceObjectMap.get(d.deviceId)
-      if (ex.group.userData.area !== (d.area || '默认区域')) { needRelayout = true; break }
+      const apiArea = d.area || '默认区域'
+      if (ex.group.userData.area !== apiArea) {
+        console.log('[3D] syncDevices: needRelayout — area changed:', d.deviceId, ex.group.userData.area, '→', apiArea)
+        needRelayout = true; break
+      }
     }
 
     if (needRelayout) {
@@ -785,25 +835,22 @@ function initThreeScene() {
       if (entry.base)  { entry.base.material.color.set(baseHex); entry.base.material.emissive.set(e ? baseHex : new THREE.Color(0x000000)); entry.base.material.emissiveIntensity = s === 3 ? 1.0 : s === 1 ? 0.8 : 0 }
       if (entry.baseGlow) { entry.baseGlow.material.color.set(ringHex); entry.baseGlow.material.opacity = s === 3 ? 0.6 : s === 1 ? 0.5 : s === 2 ? 0.35 : 0.05 }
       // Bulb / light / disk / beam — driven by lightState
-      const bulbCfg = ls === 'alarm' ? BULB_ALARM : ls === 'on' ? BULB_ON : BULB_OFF
-      const bulbCol = new THREE.Color(bulbCfg.color)
       applyLightState(entry, ls)
-      // Re-apply custom brightness if set AND consistent with API lightState
+      // 自定义亮度仅在 API 状态一致时保留微调值，否则清除
       if (entry.group.userData._customBrightness != null) {
         const b = entry.group.userData._customBrightness
         const isCustomOff = b === 0
-        // If API says ON but custom says OFF (or vice versa), clear stale custom brightness
-        if ((ls === 'on' && isCustomOff) || (ls === 'off' && !isCustomOff)) {
-          delete entry.group.userData._customBrightness
-        } else {
-          entry.group.userData.lightState = isCustomOff ? 'off' : 'on'
-          applyLightState(entry, isCustomOff ? 'off' : 'on')
+        if ((ls === 'off' && isCustomOff) || (ls === 'on' && !isCustomOff)) {
+          // 状态一致：仅微调亮度强度
           const factor = b / 100
           if (entry.ptLight) entry.ptLight.intensity = isCustomOff ? 0 : 4 * factor
           if (entry.disk) entry.disk.material.opacity = isCustomOff ? 0 : 0.18 * factor
           if (entry.bulb) entry.bulb.material.emissiveIntensity = isCustomOff ? 0 : 8 * factor
           if (entry.base) { entry.base.material.emissiveIntensity = isCustomOff ? 0 : 1.0; entry.base.material.opacity = isCustomOff ? 0.25 : 1.0 }
           if (entry.baseGlow) { entry.baseGlow.material.opacity = isCustomOff ? 0 : 0.6 }
+        } else {
+          // API 状态已变化，清除过期自定义亮度
+          delete entry.group.userData._customBrightness
         }
       }
     }
@@ -904,8 +951,30 @@ function initThreeScene() {
     if (entry.baseGlow) {
       entry.baseGlow.material.opacity = isOff ? 0 : 0.6
     }
-    console.log('[3D] applyDeviceBrightness:', deviceId, '→', pct + '%', 'isOff:', isOff, 'entry:', !!entry, 'bulb:', !!entry.bulb)
+    console.log('[3D] applyDeviceBrightness:', deviceId, '→', pct + '%', 'isOff:', isOff,
+      'bulb.emissiveIntensity:', entry.bulb?.material.emissiveIntensity,
+      'ptLight.intensity:', entry.ptLight?.intensity,
+      'disk.opacity:', entry.disk?.material.opacity)
+    // 强制渲染一帧，确保材质变更立即可见
+    if (viewMode.value === '3d') renderer.render(scene, camera)
   }
+  applyDeviceBrightness3D = (deviceId, brightness) => applyDeviceBrightness(deviceId, brightness)
+
+  // 订阅跨标签页控制变更 → 立即更新 3D 场景
+  let unsubControl = onControlChange((deviceId, action, brightness) => {
+    const bVal = action === 'OFF' ? 0 : (brightness != null ? brightness : 100)
+    applyDeviceBrightness(deviceId, bVal)
+  })
+
+  // 订阅同窗口 ManualControlModal 控制变更 → 立即更新 3D 场景
+  function onManualStateChange(e) {
+    const { deviceId, action, brightness } = e.detail || {}
+    if (!deviceId || !action) return
+    const bVal = action === 'OFF' ? 0 : (brightness != null ? brightness : 100)
+    setControlState(deviceId, action, bVal)
+    applyDeviceBrightness(deviceId, bVal)
+  }
+  window.addEventListener('manual-control-state-change', onManualStateChange)
 
   // Replace single device: destroy old → create new with correct state
   // deviceData (optional): fresh API device object including latestData
@@ -961,25 +1030,37 @@ function initThreeScene() {
     deviceObjectMap.forEach((entry) => {
       const isSelected = areaName && entry.group.userData.area === areaName
       if (areaName && !isSelected) {
-        // Dim non-selected area devices
+        // 非选中区域：大幅度压暗
         if (entry.base) {
-          entry.base.material.emissiveIntensity = 0.05
-          entry.base.material.opacity = 0.3
+          entry.base.material.emissiveIntensity = 0
+          entry.base.material.opacity = 0.15
+          entry.base.material.color.set(0x1a2a3a)
         }
-        if (entry.baseGlow) entry.baseGlow.material.opacity = 0.03
-        if (entry.bulb) entry.bulb.material.emissiveIntensity = 0.1
-        if (entry.ptLight) entry.ptLight.intensity = 0.1
-        if (entry.disk) entry.disk.material.opacity = 0.01
+        if (entry.baseGlow) entry.baseGlow.material.opacity = 0
+        if (entry.bulb) { entry.bulb.material.emissiveIntensity = 0; entry.bulb.material.color.set(0x1a1a1a) }
+        if (entry.ptLight) { entry.ptLight.intensity = 0; entry.ptLight.color.setHex(0x000000) }
+        if (entry.disk) entry.disk.material.opacity = 0
+        // 移除光束
+        const beam = entry.group.children.find(c => c.name === 'beam')
+        if (beam) { beam.geometry.dispose(); beam.material.dispose(); entry.group.remove(beam) }
       } else {
-        // Restore to normal state via applyLightState
+        // 选中区域或无筛选：恢复正常
         const ls = entry.group.userData.lightState
         applyLightState(entry, ls)
+        // 选中区域设备底座额外提亮
+        if (areaName && isSelected && entry.base) {
+          entry.base.material.emissiveIntensity = entry.group.userData.status === 3 ? 1.5 : 1.4
+          entry.base.material.opacity = 1.0
+        }
+        if (areaName && isSelected && entry.baseGlow) {
+          entry.baseGlow.material.opacity = entry.group.userData.status === 3 ? 0.9 : 0.75
+        }
         // Re-apply custom brightness (including base)
         if (entry.group.userData._customBrightness != null) {
           const b = entry.group.userData._customBrightness
           const isOff = b === 0
-          if (entry.base) { entry.base.material.emissiveIntensity = isOff ? 0 : 1.0; entry.base.material.opacity = isOff ? 0.25 : 1.0 }
-          if (entry.baseGlow) { entry.baseGlow.material.opacity = isOff ? 0 : 0.6 }
+          if (entry.base) { entry.base.material.emissiveIntensity = isOff ? 0 : (areaName && isSelected ? 1.4 : 1.0); entry.base.material.opacity = isOff ? 0.25 : 1.0 }
+          if (entry.baseGlow) { entry.baseGlow.material.opacity = isOff ? 0 : (areaName && isSelected ? 0.75 : 0.6) }
           if (!isOff && ls === 'on') {
             const factor = b / 100
             if (entry.ptLight) entry.ptLight.intensity = 4 * factor
@@ -989,16 +1070,20 @@ function initThreeScene() {
         }
       }
     })
-    // Highlight selected area platform
+    // 区域平台：选中高亮，未选中暗化
     areaPlatformMap.forEach((plat, name) => {
       if (areaName && name === areaName) {
-        plat.material.emissiveIntensity = 0.9
-        plat.material.opacity = 0.85
+        plat.material.emissiveIntensity = 1.2
+        plat.material.opacity = 0.9
+        plat.material.color.set(0x1a4a6a)
       } else {
-        plat.material.emissiveIntensity = 0.3
-        plat.material.opacity = areaName ? 0.25 : 0.55
+        plat.material.emissiveIntensity = 0.1
+        plat.material.opacity = areaName ? 0.12 : 0.55
+        plat.material.color.set(0x0a1528)
       }
     })
+    // 强制渲染
+    if (viewMode.value === '3d') renderer.render(scene, camera)
   }
   highlightArea3D = (areaName) => { applyAreaHighlight(areaName) }
 
@@ -1011,13 +1096,21 @@ function initThreeScene() {
     layoutDevices(devs)
   }
 
-  // Scene self-loads devices (full rebuild)
-  fetchAllDevicesForMap().then(raw => {
-    const devs = Array.isArray(raw) ? raw : (raw?.data || raw?.records || [])
-    if (devs.length > 0) {
-      layoutDevices(devs)
-    }
-  }).catch((e) => { console.warn('3D设备加载失败:', e) })
+  // Scene self-loads devices: 有预加载数据则同步使用，否则异步拉取
+  if (preloadedDevices && preloadedDevices.length > 0) {
+    layoutDevices(preloadedDevices)
+  } else {
+    fetchAllDevicesForMap().then(raw => {
+      const devs = Array.isArray(raw) ? raw : (raw?.data || raw?.records || [])
+      if (devs.length > 0) {
+        if (deviceObjectMap.size === 0) {
+          layoutDevices(devs)
+        } else {
+          syncDevices(devs)
+        }
+      }
+    }).catch((e) => { console.warn('3D设备加载失败:', e) })
+  }
 
   // ══════════════════════════════════════════════════════════════
   // Particles (3-layer)
@@ -1079,6 +1172,24 @@ function initThreeScene() {
         if (entry.baseGlow) entry.baseGlow.material.opacity = 0.3 + Math.sin(Date.now() * 0.008) * 0.25
       }
     })
+
+    // 选中区域底座呼吸闪烁
+    if (selectedArea.value) {
+      const t = Date.now() * 0.005
+      const selWave = 0.25 + Math.sin(t) * 0.75          // 0.25 ~ 1.0 光环
+      const emissiveWave = 0.6 + Math.sin(t) * 0.9       // 0.6 ~ 1.5 底座发光强度
+      const lerp = 0.3 + Math.sin(t) * 0.7               // 颜色插值因子
+      AREA_PULSE_COL_TMP.lerpColors(AREA_PULSE_COL_LO, AREA_PULSE_COL_HI, lerp)
+      deviceObjectMap.forEach(entry => {
+        if (entry.group.userData.area === selectedArea.value) {
+          if (entry.baseGlow) entry.baseGlow.material.opacity = selWave
+          if (entry.base && entry.group.userData.status !== 3) {
+            entry.base.material.emissiveIntensity = emissiveWave
+            entry.base.material.emissive.copy(AREA_PULSE_COL_TMP)
+          }
+        }
+      })
+    }
 
     // Highlight ring pulse
     if (highlightRing) {
@@ -1213,6 +1324,9 @@ function initThreeScene() {
     highlight3D = null
     highlightArea3D = null
     setDeviceLight3D = null
+    applyDeviceBrightness3D = null
+    if (unsubControl) { unsubControl(); unsubControl = null }
+    window.removeEventListener('manual-control-state-change', onManualStateChange)
     if (highlightRing) { highlightRing.geometry.dispose(); highlightRing.material.dispose(); highlightRing = null }
     if (container.contains(renderer.domElement)) {
       container.removeChild(renderer.domElement)
@@ -1252,11 +1366,8 @@ onMounted(async () => {
   // 登录后首次进入自动计算当日能耗（与数据加载并行，避免阻塞页面渲染）
   await Promise.all([autoCalcEnergyIfFirst(), loadAllData()])
   await nextTick()
-  initThreeScene()
-  // If devices loaded before the 3D scene was ready, sync them now
-  if (allDevices.value.length > 0 && syncDevices3D) {
-    syncDevices3D(allDevices.value)
-  }
+  initThreeScene(allDevices.value.length > 0 ? allDevices.value : null)
+  initialMountDone = true
   await nextTick()
   initDonutChart()
   initBarChart(districts.value || [])
@@ -1321,6 +1432,12 @@ const devicePoller = useAutoRefresh(pollDeviceStatus, { interval: 15000, immedia
 
 onActivated(() => {
   handleAllChartResize()
+  if (!initialMountDone) {
+    // 首次挂载阶段，onMounted 会处理 3D 场景初始化
+    startStatsPolling()
+    startTrendPolling()
+    return
+  }
   if (!threeDispose && threeContainer.value && viewMode.value === '3d') {
     nextTick(() => initThreeScene())
   }
@@ -1499,6 +1616,26 @@ watch(selectedArea, (area) => {
                 <svg viewBox="0 0 24 24" fill="none" width="14" height="14"><path d="M3 7l6-3 6 3 6-3v13l-6 3-6-3-6 3V7z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 设备地图
               </button>
+            </div>
+            <div class="view-area-search">
+              <el-select
+                v-model="selectedArea"
+                placeholder="搜索分区..."
+                clearable
+                filterable
+                size="small"
+                :options="areaOptions"
+                @change="onAreaSelect"
+                popper-class="area-search-popper"
+                style="width: 160px"
+              >
+                <template #prefix>
+                  <svg viewBox="0 0 24 24" fill="none" width="12" height="12" style="margin-right: 2px">
+                    <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.5"/>
+                    <path d="M16.5 16.5L21 21" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                  </svg>
+                </template>
+              </el-select>
             </div>
             <div class="view-badge">
               <span class="view-badge-dot"></span>实时渲染
@@ -2120,5 +2257,38 @@ watch(selectedArea, (area) => {
   .panel-col-center { min-height: 400px; }
   .three-container { min-height: 400px; }
   .header-subtitle { display: none; }
+}
+
+/* ── 分区搜索下拉 ── */
+.view-area-search :deep(.el-select) { --el-fill-color-blank: rgba(8,24,52,0.6); }
+.view-area-search :deep(.el-input__wrapper) {
+  background: rgba(8,28,58,0.7); border-color: rgba(77,208,225,0.2);
+  box-shadow: none; padding: 2px 8px;
+}
+.view-area-search :deep(.el-input__wrapper:hover) { border-color: rgba(77,208,225,0.4); }
+.view-area-search :deep(.el-input__inner) {
+  color: rgba(180,220,240,0.8); font-size: 11px; font-weight: 500;
+}
+.view-area-search :deep(.el-input__inner::placeholder) { color: rgba(140,190,220,0.35); }
+.view-area-search :deep(.el-select__caret) { color: rgba(77,208,225,0.5); }
+
+/* 下拉面板暗色主题 */
+.area-search-popper {
+  background: rgba(6,20,44,0.97) !important;
+  border: 1px solid rgba(77,208,225,0.2) !important;
+  backdrop-filter: blur(10px);
+}
+.area-search-popper .el-select-dropdown__item {
+  color: rgba(180,220,240,0.7); font-size: 12px;
+}
+.area-search-popper .el-select-dropdown__item.hover,
+.area-search-popper .el-select-dropdown__item:hover {
+  background: rgba(0,120,200,0.2); color: #4dd0e1;
+}
+.area-search-popper .el-select-dropdown__item.selected {
+  color: #4dd0e1; background: rgba(0,120,200,0.15); font-weight: 600;
+}
+.area-search-popper .el-popper__arrow::before {
+  background: rgba(6,20,44,0.97); border-color: rgba(77,208,225,0.2);
 }
 </style>
