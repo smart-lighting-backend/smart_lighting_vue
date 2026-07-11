@@ -339,7 +339,7 @@ async function handleLogin() {
         department: res.data.department,
         phone: res.data.phone,
         roleCode: res.data.roleCode,
-        roleName: getRoleLabel(res.data.roleCode),
+        roleName: res.data.roleName || getRoleLabel(res.data.roleCode),
       }
       if (!token) throw new Error('未收到有效 Token')
       // 保存权限列表和菜单树

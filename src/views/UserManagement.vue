@@ -255,9 +255,10 @@ async function handleBatchDelete() {
   }
 }
 
-async function handleExportUsers() {
+async function handleExportUsers(ids) {
   try {
-    const res = await exportUsers(searchForm.value)
+    const params = ids && ids.length > 0 ? { ...searchForm.value, ids } : searchForm.value
+    const res = await exportUsers(params)
     // res 是 axios 响应对象，Blob 在 res.data 中
     const blob = res?.data || res
     if (!(blob instanceof Blob)) {
@@ -344,7 +345,7 @@ onMounted(() => {
       <button v-if="hasPerm('user:delete')" class="batch-bar-btn danger-btn" @click="handleBatchDelete">
         <Delete style="width:13px;height:13px" /> 批量删除
       </button>
-      <button class="batch-bar-btn export-btn" @click="handleExportUsers">
+      <button class="batch-bar-btn export-btn" @click="handleExportUsers(selectedRows.map(r => r.id))">
         <Download style="width:13px;height:13px" /> 导出用户
       </button>
       <button class="batch-bar-btn cancel-btn" @click="selectedRows = []">取消选择</button>

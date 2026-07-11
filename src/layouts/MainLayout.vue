@@ -188,8 +188,28 @@ function navigateTo(item) {
 
 function filterAdminMenus() {
   const user = getUserInfo()
+  const userPerms = getPermissions()
   if (!user || user.roleCode !== 'SUPER_ADMIN') {
-    menus.value = menus.value.filter(item => item.name !== '系统管理')
+    const result = []
+    for (const menu of menus.value) {
+      if (menu.name === '系统管理' && menu.children) {
+        // 对"系统管理"下的子菜单逐项做权限判断
+        const keptChildren = menu.children.filter(child => {
+          // 分区管理 → 根据 device_area 权限判断
+          if (child.path === '/devices/area') {
+            return userPerms.includes('device_area:read')
+          }
+          // 其他系统管理子菜单（权限管理、菜单管理等）仅管理员可见
+          return false
+        })
+        if (keptChildren.length > 0) {
+          result.push({ ...menu, children: keptChildren })
+        }
+      } else {
+        result.push(menu)
+      }
+    }
+    menus.value = result
   }
 }
 
@@ -237,7 +257,10 @@ onMounted(async () => {
   await refreshPermissionsAndMenus()
   await loadMenus()
   autoExpandMenus()
-  refreshAlarmBadge()
+  // 只有有告警查看权限才拉取告警数量，避免触发 403 降级 Mock
+  if (getPermissions().includes('alarm:read')) {
+    refreshAlarmBadge()
+  }
   subscribeAlarm('system/alarms', () => refreshAlarmBadge())
 })
 
