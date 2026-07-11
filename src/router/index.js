@@ -180,9 +180,9 @@ router.beforeEach(async (to, from) => {
     try {
       const res = await fetchCurrentUser()
       if (res?.data) {
-        const { username, realName, department, phone, roleCode, permissions, menus } = res.data
+        const { username, realName, phone, email, roleCode, permissions, menus } = res.data
         const inLocal = !!localStorage.getItem('smart_light_token')
-        saveAuth(token, { username, realName, department, phone, roleCode, roleName: getRoleLabel(roleCode) }, inLocal)
+        saveAuth(token, { username, realName, phone, email, roleCode, roleName: getRoleLabel(roleCode) }, inLocal)
         savePermissions(permissions || [], inLocal)
         saveMenus(menus || [], inLocal)
       }

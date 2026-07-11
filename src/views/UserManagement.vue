@@ -12,8 +12,7 @@ const { hasPerm } = useUserInfo()
 const searchForm = ref({
   username: '',
   realName: '',
-  roleId: null,
-  department: ''
+  roleId: null
 })
 
 const selectedRows = ref([])
@@ -35,7 +34,6 @@ const formData = ref({
   realName: '',
   phone: '',
   email: '',
-  department: '',
   areaCode: '',
   roleId: null,
   enabled: true
@@ -48,7 +46,6 @@ const createFormData = (user = {}) => ({
   realName: user.realName ?? '',
   phone: user.phone ?? '',
   email: user.email ?? '',
-  department: user.department ?? '',
   areaCode: user.areaCode ?? '',
   roleId: user.roleId ?? null,
   enabled: user.enabled ?? true
@@ -62,12 +59,11 @@ const buildSubmitPayload = () => {
     realName,
     phone,
     email,
-    department,
     areaCode,
     roleId,
     enabled
   } = formData.value
-  const payload = { id, username, password, realName, phone, email, department, areaCode, roleId, enabled }
+  const payload = { id, username, password, realName, phone, email, areaCode, roleId, enabled }
 
   if (dialogType.value === 'edit' && !payload.password) {
     delete payload.password
@@ -145,8 +141,7 @@ const handleReset = () => {
   searchForm.value = {
     username: '',
     realName: '',
-    roleId: null,
-    department: ''
+    roleId: null
   }
   handleSearch()
 }
@@ -376,8 +371,8 @@ onMounted(() => {
             </ElTag>
           </template>
         </ElTableColumn>
-        <ElTableColumn prop="department" label="部门" min-width="120" show-overflow-tooltip />
         <ElTableColumn prop="phone" label="联系电话" min-width="120" />
+        <ElTableColumn prop="email" label="邮箱" min-width="160" show-overflow-tooltip />
         <ElTableColumn label="状态" width="100" sortable="custom" prop="enabled">
           <template #default="{ row }">
             <ElTag :type="row.enabled ? 'success' : 'danger'">
@@ -448,8 +443,8 @@ onMounted(() => {
         <ElFormItem label="联系电话" prop="phone">
           <ElInput v-model="formData.phone" placeholder="请输入联系电话" />
         </ElFormItem>
-        <ElFormItem label="部门" prop="department">
-          <ElInput v-model="formData.department" placeholder="请输入所属部门" />
+        <ElFormItem label="邮箱" prop="email">
+          <ElInput v-model="formData.email" placeholder="请输入邮箱" />
         </ElFormItem>
         <ElFormItem label="账号状态" prop="enabled">
           <ElSelect v-model="formData.enabled" style="width: 100%">

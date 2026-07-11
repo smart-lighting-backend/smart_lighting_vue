@@ -51,7 +51,7 @@ export function fetchCurrentUser() {
 /**
  * 保存认证信息
  * @param {string} token
- * @param {{ username: string, realName?: string, department?: string, phone?: string, roleCode: string, roleName?: string }} userInfo
+ * @param {{ username: string, realName?: string, phone?: string, roleCode: string, roleName?: string }} userInfo
  * @param {boolean} remember  true → localStorage（持久），false → sessionStorage
  */
 export function saveAuth(token, userInfo, remember = false) {
