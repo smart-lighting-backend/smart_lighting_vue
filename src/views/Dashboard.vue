@@ -822,6 +822,7 @@ function initThreeScene() {
 
   // Camera fly-to helpers
   function startFly(targetPos, targetLookAt) {
+    controls.autoRotate = false
     flyStartPos = camera.position.clone()
     flyStartLookAt = controls.target.clone()
     flyTarget = { pos: targetPos.clone(), lookAt: targetLookAt.clone() }
@@ -985,7 +986,7 @@ function initThreeScene() {
       const ease = 1 - Math.pow(1 - t, 3)
       camera.position.lerpVectors(flyStartPos, flyTarget.pos, ease)
       controls.target.lerpVectors(flyStartLookAt, flyTarget.lookAt, ease)
-      if (t >= 1.0) { flyTarget = null }
+      if (t >= 1.0) { flyTarget = null; controls.autoRotate = true }
     }
 
     particlesGroup.children.forEach((p, i) => {
