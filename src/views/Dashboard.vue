@@ -780,6 +780,9 @@ function initThreeScene() {
       applyLightState(entry, ls)
     }
 
+    // Re-apply area highlight after status updates
+    if (selectedArea.value) { applyAreaHighlight(selectedArea.value) }
+
     threeDeviceStats.value = {
       count: newDevices.length,
       online: newDevices.filter(d => d.status === 1).length,
@@ -880,30 +883,24 @@ function initThreeScene() {
 
   // Area highlight: dim non-selected areas, boost selected area
   function applyAreaHighlight(areaName) {
-    deviceObjectMap.forEach((entry, deviceId) => {
+    deviceObjectMap.forEach((entry) => {
       const isSelected = areaName && entry.group.userData.area === areaName
-      if (entry.base) {
-        if (areaName && !isSelected) {
+      if (areaName && !isSelected) {
+        // Dim non-selected area devices
+        if (entry.base) {
           entry.base.material.emissiveIntensity = 0.05
           entry.base.material.opacity = 0.3
-        } else {
-          const s = entry.group.userData.status
-          const e = s === 1 || s === 3
-          entry.base.material.emissiveIntensity = s === 3 ? 1.0 : s === 1 ? 0.8 : 0
-          entry.base.material.opacity = 1.0
         }
-      }
-      if (entry.baseGlow) {
-        entry.baseGlow.material.opacity = (areaName && !isSelected) ? 0.03 : (entry.group.userData.status === 3 ? 0.6 : entry.group.userData.status === 1 ? 0.5 : 0.35)
-      }
-      if (entry.bulb) {
-        entry.bulb.material.emissiveIntensity = (areaName && !isSelected) ? 0.1 : entry.bulb.material.emissiveIntensity
-      }
-      if (entry.ptLight) {
-        entry.ptLight.intensity = (areaName && !isSelected) ? 0.1 : (entry.group.userData.status === 3 ? 1.5 : entry.group.userData.status === 1 ? 4 : 0)
+        if (entry.baseGlow) entry.baseGlow.material.opacity = 0.03
+        if (entry.bulb) entry.bulb.material.emissiveIntensity = 0.1
+        if (entry.ptLight) entry.ptLight.intensity = 0.1
+        if (entry.disk) entry.disk.material.opacity = 0.01
+      } else {
+        // Restore to normal state via applyLightState
+        applyLightState(entry, entry.group.userData.lightState)
       }
     })
-    // Highlight platform
+    // Highlight selected area platform
     areaPlatformMap.forEach((plat, name) => {
       if (areaName && name === areaName) {
         plat.material.emissiveIntensity = 0.9
@@ -927,7 +924,7 @@ function initThreeScene() {
     if (devs.length > 0) {
       layoutDevices(devs)
     }
-  }).catch(() => {})
+  }).catch((e) => { console.warn('3D设备加载失败:', e) })
 
   // ══════════════════════════════════════════════════════════════
   // Particles (3-layer)
