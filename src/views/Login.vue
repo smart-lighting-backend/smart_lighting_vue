@@ -337,8 +337,8 @@ function mockLogin(username) {
     userInfo: {
       username,
       realName: '系统管理员',
-      department: '技术部',
       phone: '13800000001',
+      email: 'admin@example.com',
       roleCode: 'SUPER_ADMIN',
       roleName: '系统管理员（Mock）',
     },
@@ -367,8 +367,8 @@ async function handleLogin() {
       userInfo = {
         username: res.data.username,
         realName: res.data.realName,
-        department: res.data.department,
         phone: res.data.phone,
+        email: res.data.email,
         roleCode: res.data.roleCode,
         roleName: res.data.roleName || getRoleLabel(res.data.roleCode),
       }

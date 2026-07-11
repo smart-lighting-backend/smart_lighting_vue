@@ -1,20 +1,95 @@
-﻿<script setup>
+<script setup>
 import { ref, computed, onMounted, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserInfo } from '../composables/useUserInfo.js'
-import { clearAuth, getToken, getMenus, saveMenus, refreshPermissionsAndMenus, getUserInfo, getPermissions, isMockAuthToken } from '../api/auth.js'
+import { clearAuth, getMenus, saveMenus, refreshPermissionsAndMenus, getUserInfo, getPermissions, saveAuth } from '../api/auth.js'
 import { fetchAlarmPage } from '../api/warnings.js'
 import { useMqtt } from '../composables/useMqtt.js'
 import { fetchVisibleMenus } from '../api/menu.js'
+import { updateProfile, changePassword } from '../api/profile.js'
 import ManualControlModal from '../components/ManualControlModal.vue'
 
 const route  = useRoute()
 const router = useRouter()
-const { realName, department, phone, roleName, permissions } = useUserInfo()
+const { realName, phone, email, roleName, permissions } = useUserInfo()
 
 const showManual = ref(false)
 const showUserInfo = ref(false)
 const alarmCount = ref(0)
+
+// ═══ 编辑资料/修改密码 ═══
+const showEditProfile = ref(false)
+const showChangePwd = ref(false)
+const submitting = ref(false)
+const editForm = ref({ realName: '', phone: '', email: '' })
+const pwdForm = ref({ oldPassword: '', newPassword: '', confirmPassword: '' })
+const pwdError = ref('')
+
+function openEditProfile() {
+  const info = getUserInfo()
+  editForm.value = {
+    realName: info?.realName || '',
+    phone: info?.phone || '',
+    email: info?.email || '',
+  }
+  showEditProfile.value = true
+}
+
+async function handleSaveProfile() {
+  submitting.value = true
+  try {
+    await updateProfile(editForm.value)
+    // 更新本地缓存的用户信息
+    const info = getUserInfo()
+    if (info) {
+      saveAuth(
+        localStorage.getItem('smart_light_token') || sessionStorage.getItem('smart_light_token'),
+        { ...info, ...editForm.value },
+        !!localStorage.getItem('smart_light_token')
+      )
+    }
+    showEditProfile.value = false
+  } catch (e) {
+    alert(e?.message || e?.msg || '保存失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+function openChangePwd() {
+  pwdForm.value = { oldPassword: '', newPassword: '', confirmPassword: '' }
+  pwdError.value = ''
+  showChangePwd.value = true
+}
+
+async function handleChangePwd() {
+  pwdError.value = ''
+  if (!pwdForm.value.oldPassword || !pwdForm.value.newPassword) {
+    pwdError.value = '请填写完整'
+    return
+  }
+  if (pwdForm.value.newPassword.length < 6) {
+    pwdError.value = '新密码长度不能少于6位'
+    return
+  }
+  if (pwdForm.value.newPassword !== pwdForm.value.confirmPassword) {
+    pwdError.value = '两次输入的新密码不一致'
+    return
+  }
+  submitting.value = true
+  try {
+    await changePassword({
+      oldPassword: pwdForm.value.oldPassword,
+      newPassword: pwdForm.value.newPassword,
+    })
+    showChangePwd.value = false
+    alert('密码修改成功')
+  } catch (e) {
+    pwdError.value = e?.message || e?.msg || '修改失败'
+  } finally {
+    submitting.value = false
+  }
+}
 
 // ═══ 沉浸模式（侧边栏 + 顶栏收起） ═══
 const sidebarCollapsed = ref(false)
@@ -61,16 +136,6 @@ async function loadMenus() {
   if (menus.value.length === 0) {
     loadingMenus.value = true
   }
-  const cached = getMenus()
-  if (isMockAuthToken()) {
-    menus.value = cached && cached.length > 0
-      ? cached.sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
-      : FALLBACK_MENUS
-    filterAdminMenus()
-    autoExpandMenus()
-    loadingMenus.value = false
-    return
-  }
   try {
     const res = await fetchVisibleMenus()
 
@@ -84,6 +149,7 @@ async function loadMenus() {
       const inLocal = !!localStorage.getItem('smart_light_token')
       saveMenus(menus.value, inLocal)
     } else {
+      const cached = getMenus()
       if (cached && cached.length > 0) {
         menus.value = cached.sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
       } else {
@@ -93,6 +159,7 @@ async function loadMenus() {
     filterAdminMenus()
     autoExpandMenus()
   } catch (error) {
+    const cached = getMenus()
     if (cached && cached.length > 0) {
       menus.value = cached.sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
     } else {
@@ -254,7 +321,6 @@ provide('reloadSidebarMenus', loadMenus)
 const { subscribe: subscribeAlarm } = useMqtt()
 
 async function refreshAlarmBadge() {
-  if (isMockAuthToken(getToken())) return
   try {
     const res = await fetchAlarmPage({ status: 'ACTIVE', pageNum: 1, pageSize: 1 })
     const d = res?.data
@@ -270,9 +336,7 @@ onMounted(async () => {
   if (getPermissions().includes('alarm:read')) {
     refreshAlarmBadge()
   }
-  if (!isMockAuthToken(getToken())) {
-    subscribeAlarm('system/alarms', () => refreshAlarmBadge())
-  }
+  subscribeAlarm('system/alarms', () => refreshAlarmBadge())
 })
 
 </script>
@@ -408,12 +472,12 @@ onMounted(async () => {
               <span class="ui-value">{{ realName }}</span>
             </div>
             <div class="ui-row">
-              <span class="ui-label">部门</span>
-              <span class="ui-value">{{ department }}</span>
-            </div>
-            <div class="ui-row">
               <span class="ui-label">联系电话</span>
               <span class="ui-value">{{ phone }}</span>
+            </div>
+            <div class="ui-row">
+              <span class="ui-label">邮箱</span>
+              <span class="ui-value">{{ email || '未设置' }}</span>
             </div>
             <div class="ui-row">
               <span class="ui-label">角色</span>
@@ -421,9 +485,90 @@ onMounted(async () => {
             </div>
           </div>
           <div class="ui-footer">
+            <button class="ui-btn-edit" type="button" @click="openEditProfile">
+              编辑资料
+            </button>
+            <button class="ui-btn-pwd" type="button" @click="openChangePwd">
+              修改密码
+            </button>
             <button class="ui-logout-btn" type="button" @click="logout">
               <svg viewBox="0 0 24 24" fill="none"><path d="M16 17l5-5-5-5M21 12H9M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
               退出登录
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- 编辑资料弹窗 -->
+    <Transition name="fade-up">
+      <div v-if="showEditProfile" class="user-info-overlay" @click.self="showEditProfile = false">
+        <div class="user-info-card edit-card" role="dialog" aria-modal="true">
+          <button class="ui-close" type="button" @click="showEditProfile = false">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+          <div class="ui-header">
+            <div class="ui-avatar">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="ui-title">编辑资料</div>
+          </div>
+          <div class="ui-body edit-body">
+            <div class="ef-row">
+              <label class="ef-label">真实姓名</label>
+              <input v-model="editForm.realName" class="ef-input" placeholder="请输入真实姓名" maxlength="20" />
+            </div>
+            <div class="ef-row">
+              <label class="ef-label">手机号</label>
+              <input v-model="editForm.phone" class="ef-input" placeholder="请输入手机号" maxlength="11" />
+            </div>
+            <div class="ef-row">
+              <label class="ef-label">邮箱</label>
+              <input v-model="editForm.email" class="ef-input" placeholder="请输入邮箱" maxlength="50" />
+            </div>
+          </div>
+          <div class="ui-footer edit-footer">
+            <button class="ui-btn-cancel" type="button" @click="showEditProfile = false">取消</button>
+            <button class="ui-btn-save" type="button" :disabled="submitting" @click="handleSaveProfile">
+              {{ submitting ? '保存中...' : '保存' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- 修改密码弹窗 -->
+    <Transition name="fade-up">
+      <div v-if="showChangePwd" class="user-info-overlay" @click.self="showChangePwd = false">
+        <div class="user-info-card edit-card" role="dialog" aria-modal="true">
+          <button class="ui-close" type="button" @click="showChangePwd = false">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+          <div class="ui-header">
+            <div class="ui-avatar">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 7V5a3 3 0 116 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="4" y="11" width="16" height="10" rx="2" fill="currentColor" opacity="0.2" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="16" r="1.5" fill="currentColor"/><path d="M12 16v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="ui-title">修改密码</div>
+          </div>
+          <div class="ui-body edit-body">
+            <div class="ef-row">
+              <label class="ef-label">旧密码</label>
+              <input v-model="pwdForm.oldPassword" class="ef-input" type="password" placeholder="请输入旧密码" maxlength="32" />
+            </div>
+            <div class="ef-row">
+              <label class="ef-label">新密码</label>
+              <input v-model="pwdForm.newPassword" class="ef-input" type="password" placeholder="至少6位" maxlength="32" />
+            </div>
+            <div class="ef-row">
+              <label class="ef-label">确认新密码</label>
+              <input v-model="pwdForm.confirmPassword" class="ef-input" type="password" placeholder="再次输入新密码" maxlength="32" />
+            </div>
+            <div v-if="pwdError" class="ef-error">{{ pwdError }}</div>
+          </div>
+          <div class="ui-footer edit-footer">
+            <button class="ui-btn-cancel" type="button" @click="showChangePwd = false">取消</button>
+            <button class="ui-btn-save" type="button" :disabled="submitting" @click="handleChangePwd">
+              {{ submitting ? '修改中...' : '确认修改' }}
             </button>
           </div>
         </div>
@@ -608,7 +753,6 @@ onMounted(async () => {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
-  min-height: 0;
   background: #060e1f;
 }
 
@@ -698,7 +842,6 @@ onMounted(async () => {
 
 .page-content {
   flex: 1;
-  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   background: #060e1f;
@@ -860,6 +1003,28 @@ onMounted(async () => {
 }
 .ui-footer {
   padding: 0 28px 28px;
+  display: flex;
+  gap: 8px;
+}
+.ui-btn-edit,
+.ui-btn-pwd {
+  flex: 1;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid rgba(0, 141, 230, 0.24);
+  background: rgba(0, 141, 230, 0.06);
+  color: #1a5276;
+}
+.ui-btn-edit:hover,
+.ui-btn-pwd:hover {
+  background: rgba(0, 141, 230, 0.12);
+  border-color: rgba(0, 141, 230, 0.4);
 }
 .ui-logout-btn {
   width: 100%;
@@ -884,6 +1049,83 @@ onMounted(async () => {
   transform: translateY(-1px);
 }
 .ui-logout-btn svg { width: 18px; height: 18px; }
+
+/* ═══ 编辑资料 / 修改密码表单 ═══ */
+.edit-card { width: min(440px, 100%) !important; }
+.edit-body {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 16px !important;
+}
+.ef-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ef-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1a3d5c;
+}
+.ef-input {
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid rgba(16, 126, 196, 0.2);
+  border-radius: 6px;
+  font-size: 14px;
+  color: #152a40;
+  background: #f8fbfe;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.ef-input:focus {
+  border-color: #35c7d8;
+  box-shadow: 0 0 0 3px rgba(53, 199, 216, 0.15);
+}
+.ef-error {
+  font-size: 13px;
+  color: #cf343b;
+  background: rgba(229, 72, 77, 0.08);
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin-top: 4px;
+}
+.edit-footer {
+  display: flex;
+  gap: 10px;
+  padding: 0 28px 28px;
+}
+.ui-btn-cancel,
+.ui-btn-save {
+  flex: 1;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+}
+.ui-btn-cancel {
+  background: #f0f5fa;
+  color: #3d5a73;
+  border: 1px solid rgba(16, 126, 196, 0.14);
+}
+.ui-btn-cancel:hover { background: #e4eef7; }
+.ui-btn-save {
+  background: linear-gradient(135deg, #0077cc, #0099e6);
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(0, 141, 230, 0.25);
+}
+.ui-btn-save:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(0, 141, 230, 0.35); }
+.ui-btn-save:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
 
 @media (max-width: 420px) {
   .user-info-overlay { padding: 16px; }
@@ -915,4 +1157,3 @@ onMounted(async () => {
   opacity: 0;
 }
 </style>
-
