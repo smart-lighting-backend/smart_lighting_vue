@@ -51,6 +51,7 @@ async function handlePopupControl(action, brightness) {
     else if (action === 'OFF') popupDevice.value._brightness = 0
     else if (action === 'DIMMING') popupDevice.value._brightness = brightness
     // Sync 3D light state
+    console.log('[popup] control:', popupDevice.value.deviceId, action, brightness, 'setDeviceLight3D:', !!setDeviceLight3D)
     setDeviceLight3D?.(popupDevice.value.deviceId, action === 'OFF' ? 0 : (brightness || 100))
     ElMessage.success(action === 'ON' ? '已开灯' : action === 'OFF' ? '已关灯' : `亮度已调至 ${brightness}%`)
   } catch (_) { /* silent */ }
@@ -778,6 +779,21 @@ function initThreeScene() {
       const bulbCfg = ls === 'alarm' ? BULB_ALARM : ls === 'on' ? BULB_ON : BULB_OFF
       const bulbCol = new THREE.Color(bulbCfg.color)
       applyLightState(entry, ls)
+      // Re-apply custom brightness if set
+      if (entry.group.userData._customBrightness != null) {
+        const b = entry.group.userData._customBrightness
+        if (b === 0) {
+          entry.group.userData.lightState = 'off'
+          applyLightState(entry, 'off')
+        } else {
+          entry.group.userData.lightState = 'on'
+          applyLightState(entry, 'on')
+          const factor = b / 100
+          if (entry.ptLight) entry.ptLight.intensity = 4 * factor
+          if (entry.disk) entry.disk.material.opacity = 0.18 * factor
+          if (entry.bulb) entry.bulb.material.emissiveIntensity = 8 * factor
+        }
+      }
     }
 
     // Re-apply area highlight after status updates
@@ -813,7 +829,8 @@ function initThreeScene() {
   }
   function flyToArea(areaName) {
     const info = areaGroups.get(areaName)
-    if (!info) return
+    if (!info) { console.warn('[3D] flyToArea: area not found:', areaName, 'available:', [...areaGroups.keys()]); return }
+    console.log('[3D] flyToArea:', areaName)
     const targetPos = new THREE.Vector3(info.center.x + 5, 8, info.center.z + 8)
     const targetLookAt = new THREE.Vector3(info.center.x, 0, info.center.z)
     startFly(targetPos, targetLookAt)
@@ -855,29 +872,22 @@ function initThreeScene() {
   // Device light control (brightness → 3D bulb intensity)
   function applyDeviceBrightness(deviceId, brightness) {
     const entry = deviceObjectMap.get(deviceId)
-    if (!entry) return
+    if (!entry) { console.warn('[3D] device not found:', deviceId); return }
     const pct = Math.max(0, Math.min(100, brightness))
+    entry.group.userData._customBrightness = pct
     if (pct === 0) {
+      entry.group.userData.lightState = 'off'
       applyLightState(entry, 'off')
       return
     }
+    entry.group.userData.lightState = 'on'
     applyLightState(entry, 'on')
-    // Scale emissive/bulb/pointlight by brightness percentage
+    // Scale bulb/pointlight/disk by brightness percentage
     const factor = pct / 100
-    const bulbCol = new THREE.Color(0xffffff)
-    if (entry.bulb) {
-      entry.bulb.material.color.set(bulbCol)
-      entry.bulb.material.emissive.set(bulbCol)
-      entry.bulb.material.emissiveIntensity = 8 * factor
-    }
-    if (entry.ptLight) {
-      entry.ptLight.color.setHex(0xfff8e7)
-      entry.ptLight.intensity = 4 * factor
-    }
-    if (entry.disk) {
-      entry.disk.material.color.setHex(0xfff8e7)
-      entry.disk.material.opacity = 0.18 * factor
-    }
+    if (entry.ptLight) { entry.ptLight.intensity = 4 * factor }
+    if (entry.disk) { entry.disk.material.opacity = 0.18 * factor }
+    // Bulb brightness override (applyLightState sets emissiveIntensity to 8, we override)
+    if (entry.bulb) { entry.bulb.material.emissiveIntensity = 8 * factor }
   }
   setDeviceLight3D = (deviceId, brightness) => { applyDeviceBrightness(deviceId, brightness) }
 
@@ -897,7 +907,15 @@ function initThreeScene() {
         if (entry.disk) entry.disk.material.opacity = 0.01
       } else {
         // Restore to normal state via applyLightState
-        applyLightState(entry, entry.group.userData.lightState)
+        const ls = entry.group.userData.lightState
+        applyLightState(entry, ls)
+        // Re-apply custom brightness
+        if (entry.group.userData._customBrightness != null && ls === 'on') {
+          const factor = entry.group.userData._customBrightness / 100
+          if (entry.ptLight) entry.ptLight.intensity = 4 * factor
+          if (entry.disk) entry.disk.material.opacity = 0.18 * factor
+          if (entry.bulb) entry.bulb.material.emissiveIntensity = 8 * factor
+        }
       }
     })
     // Highlight selected area platform
