@@ -12,7 +12,7 @@ import { useCountUp } from '../composables/useCountUp.js'
 import { useAutoRefresh } from '../composables/useAutoRefresh.js'
 import { withCache, invalidateCache } from '../utils/requestCache.js'
 import { parseLatestData } from '../utils/manualControlState.js'
-import { getControlState } from '../utils/controlStateStore.js'
+import { getControlState, setControlState } from '../utils/controlStateStore.js'
 import DeviceMap from '../components/DeviceMap.vue'
 
 const router = useRouter()
@@ -55,8 +55,10 @@ async function handlePopupControl(action, brightness) {
     if (action === 'ON') popupDevice.value._brightness = 100
     else if (action === 'OFF') popupDevice.value._brightness = 0
     else if (action === 'DIMMING') popupDevice.value._brightness = brightness
-    // Sync 3D light state
+    // 写入全局控制状态缓存（getLightState 优先读取）
     const bVal = action === 'OFF' ? 0 : (brightness || 100)
+    setControlState(did, action, bVal)
+    // Sync 3D light state
     console.log('[popup] control:', did, action, '→ brightness:', bVal, 'setDeviceLight3D:', !!setDeviceLight3D)
     setDeviceLight3D?.(did, bVal)
     ElMessage.success(action === 'ON' ? '已开灯' : action === 'OFF' ? '已关灯' : `亮度已调至 ${brightness}%`)
