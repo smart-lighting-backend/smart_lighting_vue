@@ -58,9 +58,14 @@ async function handlePopupControl(action, brightness) {
     // 写入全局控制状态缓存（getLightState 优先读取）
     const bVal = action === 'OFF' ? 0 : (brightness || 100)
     setControlState(did, action, bVal)
-    // Sync 3D light state
-    console.log('[popup] control:', did, action, '→ brightness:', bVal, 'setDeviceLight3D:', !!setDeviceLight3D)
+    // 立即更新 3D 视觉
     setDeviceLight3D?.(did, bVal)
+    // 拉取最新数据并全量重建设备（确保 3D 与后端正确定同步）
+    if (syncDevices3D) {
+      const list = await fetchAllDevicesForMap()
+      const devs = Array.isArray(list) ? list : (list?.data || list?.records || [])
+      if (devs.length > 0) { allDevices.value = devs; syncDevices3D(devs) }
+    }
     ElMessage.success(action === 'ON' ? '已开灯' : action === 'OFF' ? '已关灯' : `亮度已调至 ${brightness}%`)
   } catch (e) { console.error('[popup] control error:', e) }
   finally { controlLoading.value = false }
