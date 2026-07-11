@@ -571,7 +571,7 @@ defineExpose({ highlightDevice, clearHighlight, fitBounds: () => {} })
 .dm-error { color: #ef5350; }
 .dm-hud {
   position: absolute;
-  top: 22px;
+  top: 52px;
   left: 22px;
   z-index: 6;
   display: flex;
