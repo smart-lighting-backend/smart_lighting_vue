@@ -60,11 +60,12 @@ async function handlePopupControl(action, brightness) {
     setControlState(did, action, bVal)
     // 立即更新 3D 视觉
     setDeviceLight3D?.(did, bVal)
-    // 拉取最新数据并全量重建设备（确保 3D 与后端一致）
+    // 拉取最新数据并全量重建设备
     if (rebuildScene3D) {
       const list = await fetchAllDevicesForMap()
       const devs = Array.isArray(list) ? list : (list?.data || list?.records || [])
-      if (devs.length > 0) { allDevices.value = devs; rebuildScene3D(devs) }
+      console.log('[popup] rebuild: fetched', devs.length, 'devices, rebuildScene3D:', !!rebuildScene3D)
+      if (devs.length > 0) { allDevices.value = devs; rebuildScene3D(devs); console.log('[popup] rebuild complete') }
     }
     ElMessage.success(action === 'ON' ? '已开灯' : action === 'OFF' ? '已关灯' : `亮度已调至 ${brightness}%`)
   } catch (e) { console.error('[popup] control error:', e) }
@@ -674,6 +675,7 @@ function initThreeScene() {
   // Layout: area-grouped clustering
   // ══════════════════════════════════════════════════════════════
   function layoutDevices(devices) {
+    console.log('[3D] layoutDevices start:', devices?.length, 'devices, deviceObjectMap:', deviceObjectMap.size)
     // Dispose old
     deviceObjectMap.forEach(entry => {
       scene.remove(entry.group)
@@ -742,6 +744,7 @@ function initThreeScene() {
     }
     // Re-apply area highlight after rebuild
     if (selectedArea.value) { applyAreaHighlight(selectedArea.value) }
+    console.log('[3D] layoutDevices done, deviceObjectMap:', deviceObjectMap.size, 'areaGroups:', areaGroups.size)
   }
 
   // ══════════════════════════════════════════════════════════════
