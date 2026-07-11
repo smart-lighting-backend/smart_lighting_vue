@@ -6,7 +6,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import * as echarts from 'echarts'
 import { fetchDashboardStats, fetchEnergyTrend, fetchDistrictData, triggerEnergyCalc, genTestData, fetchEdgeRecent, triggerEdgeSimulation } from '../api/dashboard.js'
-import { fetchAllDevicesForMap } from '../api/devices.js'
+import { fetchAllDevicesForMap, controlDevice } from '../api/devices.js'
 
 import { useCountUp } from '../composables/useCountUp.js'
 import { useAutoRefresh } from '../composables/useAutoRefresh.js'
@@ -26,12 +26,35 @@ const toggleImmersive = immersive?.toggleImmersive ?? (() => {})
 const popupDevice = ref(null)
 const hoveredDevice = ref(null)
 const hoverTooltipStyle = ref({})
+const controlLoading = ref(false)
 function showDevicePopup(device) {
-  popupDevice.value = device
+  let brightness = 100
+  if (device.lightState === 'off') brightness = 0
+  else if (device.latestData) {
+    try {
+      const ld = typeof device.latestData === 'string' ? JSON.parse(device.latestData) : device.latestData
+      if (ld?.brightness != null) brightness = ld.brightness
+    } catch (_) { /* ignore */ }
+  }
+  popupDevice.value = { ...device, _brightness: brightness }
 }
 function dismissPopup() { popupDevice.value = null }
 function goToDeviceDetail(deviceId) {
   router.push(`/devices/${deviceId}?from=dashboard`)
+}
+async function handlePopupControl(action, brightness) {
+  if (controlLoading.value || !popupDevice.value) return
+  controlLoading.value = true
+  try {
+    await controlDevice(popupDevice.value.deviceId, { action, brightness })
+    if (action === 'ON') popupDevice.value._brightness = 100
+    else if (action === 'OFF') popupDevice.value._brightness = 0
+    else if (action === 'DIMMING') popupDevice.value._brightness = brightness
+    // Sync 3D light state
+    setDeviceLight3D?.(popupDevice.value.deviceId, action === 'OFF' ? 0 : (brightness || 100))
+    ElMessage.success(action === 'ON' ? '已开灯' : action === 'OFF' ? '已关灯' : `亮度已调至 ${brightness}%`)
+  } catch (_) { /* silent */ }
+  finally { controlLoading.value = false }
 }
 
 // ═══ 视图切换 ═══
@@ -115,6 +138,8 @@ const threeDeviceStats = ref({ count: 0, online: 0, alarm: 0 })  // 3D 场景设
 let syncDevices3D = null  // 外部可调用的设备同步函数
 let flyToArea3D = null     // 外部可调用的相机飞行函数
 let highlight3D = null     // 外部可调用的设备高亮函数
+let highlightArea3D = null // 外部可调用的区域高亮函数
+let setDeviceLight3D = null // 外部可调用的设备亮度函数
 
 // ═══ 数据加载 ═══
 async function loadAllData() {
@@ -700,6 +725,8 @@ function initThreeScene() {
       online: devices.filter(d => d.status === 1).length,
       alarm: devices.filter(d => d.status === 3).length,
     }
+    // Re-apply area highlight after rebuild
+    if (selectedArea.value) { applyAreaHighlight(selectedArea.value) }
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -821,6 +848,73 @@ function initThreeScene() {
     scene.add(highlightRing)
   }
   highlight3D = (id) => { highlightDevice3D(id) }
+
+  // Device light control (brightness → 3D bulb intensity)
+  function applyDeviceBrightness(deviceId, brightness) {
+    const entry = deviceObjectMap.get(deviceId)
+    if (!entry) return
+    const pct = Math.max(0, Math.min(100, brightness))
+    if (pct === 0) {
+      applyLightState(entry, 'off')
+      return
+    }
+    applyLightState(entry, 'on')
+    // Scale emissive/bulb/pointlight by brightness percentage
+    const factor = pct / 100
+    const bulbCol = new THREE.Color(0xffffff)
+    if (entry.bulb) {
+      entry.bulb.material.color.set(bulbCol)
+      entry.bulb.material.emissive.set(bulbCol)
+      entry.bulb.material.emissiveIntensity = 8 * factor
+    }
+    if (entry.ptLight) {
+      entry.ptLight.color.setHex(0xfff8e7)
+      entry.ptLight.intensity = 4 * factor
+    }
+    if (entry.disk) {
+      entry.disk.material.color.setHex(0xfff8e7)
+      entry.disk.material.opacity = 0.18 * factor
+    }
+  }
+  setDeviceLight3D = (deviceId, brightness) => { applyDeviceBrightness(deviceId, brightness) }
+
+  // Area highlight: dim non-selected areas, boost selected area
+  function applyAreaHighlight(areaName) {
+    deviceObjectMap.forEach((entry, deviceId) => {
+      const isSelected = areaName && entry.group.userData.area === areaName
+      if (entry.base) {
+        if (areaName && !isSelected) {
+          entry.base.material.emissiveIntensity = 0.05
+          entry.base.material.opacity = 0.3
+        } else {
+          const s = entry.group.userData.status
+          const e = s === 1 || s === 3
+          entry.base.material.emissiveIntensity = s === 3 ? 1.0 : s === 1 ? 0.8 : 0
+          entry.base.material.opacity = 1.0
+        }
+      }
+      if (entry.baseGlow) {
+        entry.baseGlow.material.opacity = (areaName && !isSelected) ? 0.03 : (entry.group.userData.status === 3 ? 0.6 : entry.group.userData.status === 1 ? 0.5 : 0.35)
+      }
+      if (entry.bulb) {
+        entry.bulb.material.emissiveIntensity = (areaName && !isSelected) ? 0.1 : entry.bulb.material.emissiveIntensity
+      }
+      if (entry.ptLight) {
+        entry.ptLight.intensity = (areaName && !isSelected) ? 0.1 : (entry.group.userData.status === 3 ? 1.5 : entry.group.userData.status === 1 ? 4 : 0)
+      }
+    })
+    // Highlight platform
+    areaPlatformMap.forEach((plat, name) => {
+      if (areaName && name === areaName) {
+        plat.material.emissiveIntensity = 0.9
+        plat.material.opacity = 0.85
+      } else {
+        plat.material.emissiveIntensity = 0.3
+        plat.material.opacity = areaName ? 0.25 : 0.55
+      }
+    })
+  }
+  highlightArea3D = (areaName) => { applyAreaHighlight(areaName) }
 
   // 设备同步：优先增量 diff 更新，首次/重排时走全量 layout
   syncDevices3D = (devs) => {
@@ -1023,6 +1117,8 @@ function initThreeScene() {
     syncDevices3D = null
     flyToArea3D = null
     highlight3D = null
+    highlightArea3D = null
+    setDeviceLight3D = null
     if (highlightRing) { highlightRing.geometry.dispose(); highlightRing.material.dispose(); highlightRing = null }
     if (container.contains(renderer.domElement)) {
       container.removeChild(renderer.domElement)
@@ -1186,6 +1282,11 @@ watch(highlightDeviceId, (id) => {
   highlight3D?.(id)
 })
 
+// 区域选择 → 3D 视觉联动
+watch(selectedArea, (area) => {
+  highlightArea3D?.(area)
+})
+
 </script>
 
 <template>
@@ -1328,7 +1429,14 @@ watch(highlightDeviceId, (id) => {
                 <div class="three-popup-name">{{ popupDevice.deviceName || popupDevice.deviceId }}</div>
                 <div class="three-popup-row"><span>区域</span><span>{{ popupDevice.area || '--' }}</span></div>
                 <div class="three-popup-row"><span>状态</span><span :class="'popup-status-' + popupDevice.status">{{ {0:'停用',1:'在线',2:'离线',3:'告警'}[popupDevice.status] || '未知' }}</span></div>
-                <div class="three-popup-row"><span>灯光</span><span :class="popupDevice.lightState === 'on' ? 'popup-status-1' : popupDevice.lightState === 'alarm' ? 'popup-status-3' : ''">{{ popupDevice.lightState === 'on' ? '已开灯' : popupDevice.lightState === 'alarm' ? '告警' : '已关灯' }}</span></div>
+                <div class="three-popup-row"><span>亮度</span><span>{{ popupDevice._brightness }}%</span></div>
+                <div class="three-popup-controls">
+                  <button class="popup-ctrl-btn on" :disabled="controlLoading" @click="handlePopupControl('ON')">开灯</button>
+                  <button class="popup-ctrl-btn off" :disabled="controlLoading" @click="handlePopupControl('OFF')">关灯</button>
+                  <input type="range" min="10" max="100" step="10" :value="popupDevice._brightness"
+                    class="popup-brightness" @input="handlePopupControl('DIMMING', Number($event.target.value))"
+                    :disabled="controlLoading" title="亮度调节" />
+                </div>
                 <button class="three-popup-btn" @click="goToDeviceDetail(popupDevice.deviceId)">查看详情 →</button>
               </div>
             </Transition>
@@ -1816,7 +1924,7 @@ watch(highlightDeviceId, (id) => {
 /* ── 3D click popup (fixed at top-center) ── */
 .three-popup {
   position: absolute;
-  top: 16px;
+  top: 54px;
   left: 50%;
   transform: translateX(-50%);
   background: rgba(8, 24, 52, 0.96);
@@ -1841,6 +1949,22 @@ watch(highlightDeviceId, (id) => {
 .popup-status-1 { color: #4caf82 !important; }
 .popup-status-3 { color: #ef5350 !important; }
 .popup-status-2, .popup-status-0 { color: rgba(140,190,220,0.5) !important; }
+.three-popup-controls { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.popup-ctrl-btn {
+  padding: 4px 10px; border-radius: 4px; border: 1px solid rgba(77,208,225,0.3);
+  background: rgba(0,150,220,0.15); color: #d0eaf8; font-size: 11px;
+  cursor: pointer; transition: all 0.15s;
+}
+.popup-ctrl-btn.on { border-color: rgba(76,175,130,0.4); }
+.popup-ctrl-btn.on:hover { background: rgba(76,175,130,0.3); }
+.popup-ctrl-btn.off { border-color: rgba(239,83,80,0.4); }
+.popup-ctrl-btn.off:hover { background: rgba(239,83,80,0.3); }
+.popup-ctrl-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.popup-brightness {
+  width: 60px; height: 4px; accent-color: #4dd0e1;
+  cursor: pointer; flex: 1; min-width: 50px;
+}
+.popup-brightness:disabled { opacity: 0.4; cursor: not-allowed; }
 .three-popup-btn {
   display: block; width: 100%; margin-top: 8px; padding: 6px 0;
   background: rgba(0, 150, 220, 0.2); border: 1px solid rgba(77, 208, 225, 0.3);
