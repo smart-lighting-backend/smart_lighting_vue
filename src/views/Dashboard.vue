@@ -951,6 +951,14 @@ function initThreeScene() {
       disk: group.children.find(c => c.name === 'lightDisk'),
       beam: group.children.find(c => c.name === 'beam'),
     })
+    // DEBUG: force bulb to extreme brightness to verify rendering
+    if (debugBulb && ls === 'on') {
+      debugBulb.material.emissive.setHex(0xffffff)
+      debugBulb.material.emissiveIntensity = 20
+      debugBulb.material.color.setHex(0xffffff)
+      debugBulb.scale.set(2, 2, 2)  // double size for visibility
+    }
+
     // Post-creation adjustments for light state
     const newEntry = deviceObjectMap.get(deviceId)
     if (ls === 'off' && newEntry) {
