@@ -805,8 +805,8 @@ function initThreeScene() {
         if (entry.ptLight) entry.ptLight.intensity = isOff ? 0 : 4 * factor
         if (entry.disk) entry.disk.material.opacity = isOff ? 0 : 0.18 * factor
         if (entry.bulb) entry.bulb.material.emissiveIntensity = isOff ? 0 : 8 * factor
-        if (entry.base) { entry.base.material.emissiveIntensity = isOff ? 0.02 : 0.8; entry.base.material.opacity = isOff ? 0.35 : 1.0 }
-        if (entry.baseGlow) { entry.baseGlow.material.opacity = isOff ? 0.02 : 0.5 }
+        if (entry.base) { entry.base.material.emissiveIntensity = isOff ? 0 : 1.0; entry.base.material.opacity = isOff ? 0.25 : 1.0 }
+        if (entry.baseGlow) { entry.baseGlow.material.opacity = isOff ? 0 : 0.6 }
       }
     }
 
@@ -900,11 +900,11 @@ function initThreeScene() {
     if (entry.bulb) { entry.bulb.material.emissiveIntensity = isOff ? 0 : 8 * factor }
     // Also dim base hex when off (user-visible feedback)
     if (entry.base) {
-      entry.base.material.emissiveIntensity = isOff ? 0.02 : 0.8
-      entry.base.material.opacity = isOff ? 0.35 : 1.0
+      entry.base.material.emissiveIntensity = isOff ? 0 : 1.0
+      entry.base.material.opacity = isOff ? 0.25 : 1.0
     }
     if (entry.baseGlow) {
-      entry.baseGlow.material.opacity = isOff ? 0.02 : 0.5
+      entry.baseGlow.material.opacity = isOff ? 0 : 0.6
     }
     console.log('[3D] applyDeviceBrightness:', deviceId, '→', pct + '%', 'isOff:', isOff, 'entry:', !!entry)
   }
@@ -932,8 +932,8 @@ function initThreeScene() {
         if (entry.group.userData._customBrightness != null) {
           const b = entry.group.userData._customBrightness
           const isOff = b === 0
-          if (entry.base) { entry.base.material.emissiveIntensity = isOff ? 0.02 : 0.8; entry.base.material.opacity = isOff ? 0.35 : 1.0 }
-          if (entry.baseGlow) { entry.baseGlow.material.opacity = isOff ? 0.02 : 0.5 }
+          if (entry.base) { entry.base.material.emissiveIntensity = isOff ? 0 : 1.0; entry.base.material.opacity = isOff ? 0.25 : 1.0 }
+          if (entry.baseGlow) { entry.baseGlow.material.opacity = isOff ? 0 : 0.6 }
           if (!isOff && ls === 'on') {
             const factor = b / 100
             if (entry.ptLight) entry.ptLight.intensity = 4 * factor
