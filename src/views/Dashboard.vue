@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted, onActivated, onDeactivated, nextTick, inject } from 'vue'
+import { ref, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick, inject } from 'vue'
 import { useRouter } from 'vue-router'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
