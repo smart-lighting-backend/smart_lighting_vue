@@ -12,7 +12,8 @@ import { useCountUp } from '../composables/useCountUp.js'
 import { useAutoRefresh } from '../composables/useAutoRefresh.js'
 import { withCache, invalidateCache } from '../utils/requestCache.js'
 import { parseLatestData } from '../utils/manualControlState.js'
-import { getControlState, setControlState } from '../utils/controlStateStore.js'
+import { clearControlState } from '../utils/controlStateStore.js'
+import { useControlSync } from '../composables/useControlSync.js'
 import DeviceMap from '../components/DeviceMap.vue'
 
 const router = useRouter()
@@ -52,21 +53,23 @@ async function handlePopupControl(action, brightness) {
   controlLoading.value = true
   try {
     await controlDevice(did, { action, brightness })
+    // Clear stale cache entry — we read fresh API data directly
+    clearControlState(did)
+    // Fetch fresh device data and update only the target device in 3D
+    const list = await fetchAllDevicesForMap()
+    const devs = Array.isArray(list) ? list : (list?.data || list?.records || [])
+    if (devs.length > 0) allDevices.value = devs
+    const freshDevice = devs.find(d => d.deviceId === did)
+    const bVal = action === 'OFF' ? 0 : (brightness != null ? brightness : 100)
+    if (freshDevice) {
+      replaceSingleDevice(did, bVal, freshDevice)
+    } else {
+      replaceSingleDevice(did, bVal)
+    }
+    // Update popup brightness
     if (action === 'ON') popupDevice.value._brightness = 100
     else if (action === 'OFF') popupDevice.value._brightness = 0
     else if (action === 'DIMMING') popupDevice.value._brightness = brightness
-    // 写入全局控制状态缓存（getLightState 优先读取）
-    const bVal = action === 'OFF' ? 0 : (brightness || 100)
-    setControlState(did, action, bVal)
-    // 拉取最新数据并全量重建设备
-    try {
-      const list = await fetchAllDevicesForMap()
-      const devs = Array.isArray(list) ? list : (list?.data || list?.records || [])
-      if (devs.length > 0) {
-        allDevices.value = devs
-        if (rebuildScene3D) rebuildScene3D(devs)
-      }
-    } catch (_) { /* silent */ }
     ElMessage.success(action === 'ON' ? '已开灯' : action === 'OFF' ? '已关灯' : `亮度已调至 ${brightness}%`)
   } catch (e) { console.error('[popup] control error:', e) }
   finally { controlLoading.value = false }
@@ -156,6 +159,7 @@ let flyToArea3D = null     // 外部可调用的相机飞行函数
 let highlight3D = null     // 外部可调用的设备高亮函数
 let highlightArea3D = null // 外部可调用的区域高亮函数
 let setDeviceLight3D = null // 外部可调用的设备亮度函数
+let refreshSingleDevice3D = null // 跨标签页刷新单个设备3D状态
 
 // ═══ 数据加载 ═══
 async function loadAllData() {
@@ -527,29 +531,22 @@ function initThreeScene() {
   const BULB_OFF   = { color: 0x111111, emissive: 0, diskOpacity: 0 }           // light OFF
   const BULB_ALARM = { color: 0xef5350, emissive: 2.5, diskOpacity: 0.22 }      // alarm
 
-  // Determine light state: control cache > latestData.action > illuminance > default
+  // Determine light state: latestData.action > illuminance > default
   function getLightState(device) {
-    const did = device.deviceId
     const s = device.status != null ? device.status : 2
     if (s === 3) return 'alarm'
     if (s !== 1) return 'off'
-    // 1) Global control state cache (set by sendControlCommand in real-time)
-    const cached = getControlState(did)
-    if (cached) {
-      if (cached.action === 'OFF' || cached.brightness === 0) return 'off'
-      return 'on'
-    }
-    // 2) latestData.action (from MQTT or backend snapshot)
+    // 1) latestData.action (from API — the authoritative source)
     const data = parseLatestData(device.latestData)
     if (data?.action) {
       if (data.action === 'OFF' || data.brightness === 0) return 'off'
       return 'on'
     }
-    // 3) Illuminance guess
+    // 2) Illuminance guess
     if (data?.illuminance != null) {
       return data.illuminance > 80 ? 'on' : 'off'
     }
-    // 4) Default: online with no data → ON
+    // 3) Default: online with no data → ON
     return 'on'
   }
 
@@ -796,18 +793,23 @@ function initThreeScene() {
       const bulbCfg = ls === 'alarm' ? BULB_ALARM : ls === 'on' ? BULB_ON : BULB_OFF
       const bulbCol = new THREE.Color(bulbCfg.color)
       applyLightState(entry, ls)
-      // Re-apply custom brightness if set
+      // Re-apply custom brightness if set AND consistent with API lightState
       if (entry.group.userData._customBrightness != null) {
         const b = entry.group.userData._customBrightness
-        const isOff = b === 0
-        entry.group.userData.lightState = isOff ? 'off' : 'on'
-        applyLightState(entry, isOff ? 'off' : 'on')
-        const factor = b / 100
-        if (entry.ptLight) entry.ptLight.intensity = isOff ? 0 : 4 * factor
-        if (entry.disk) entry.disk.material.opacity = isOff ? 0 : 0.18 * factor
-        if (entry.bulb) entry.bulb.material.emissiveIntensity = isOff ? 0 : 8 * factor
-        if (entry.base) { entry.base.material.emissiveIntensity = isOff ? 0 : 1.0; entry.base.material.opacity = isOff ? 0.25 : 1.0 }
-        if (entry.baseGlow) { entry.baseGlow.material.opacity = isOff ? 0 : 0.6 }
+        const isCustomOff = b === 0
+        // If API says ON but custom says OFF (or vice versa), clear stale custom brightness
+        if ((ls === 'on' && isCustomOff) || (ls === 'off' && !isCustomOff)) {
+          delete entry.group.userData._customBrightness
+        } else {
+          entry.group.userData.lightState = isCustomOff ? 'off' : 'on'
+          applyLightState(entry, isCustomOff ? 'off' : 'on')
+          const factor = b / 100
+          if (entry.ptLight) entry.ptLight.intensity = isCustomOff ? 0 : 4 * factor
+          if (entry.disk) entry.disk.material.opacity = isCustomOff ? 0 : 0.18 * factor
+          if (entry.bulb) entry.bulb.material.emissiveIntensity = isCustomOff ? 0 : 8 * factor
+          if (entry.base) { entry.base.material.emissiveIntensity = isCustomOff ? 0 : 1.0; entry.base.material.opacity = isCustomOff ? 0.25 : 1.0 }
+          if (entry.baseGlow) { entry.baseGlow.material.opacity = isCustomOff ? 0 : 0.6 }
+        }
       }
     }
 
@@ -911,7 +913,8 @@ function initThreeScene() {
   }
 
   // Replace single device: destroy old → create new with correct state
-  function replaceSingleDevice(deviceId, brightness) {
+  // deviceData (optional): fresh API device object including latestData
+  function replaceSingleDevice(deviceId, brightness, deviceData) {
     const oldEntry = deviceObjectMap.get(deviceId)
     if (!oldEntry) { console.warn('[3D] replaceDevice: not found:', deviceId); return }
     const pos = oldEntry.group.position.clone()
@@ -920,28 +923,15 @@ function initThreeScene() {
     scene.remove(oldEntry.group)
     oldEntry.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) { if (Array.isArray(c.material)) c.material.forEach(m => m.dispose()); else c.material.dispose() } })
     deviceObjectMap.delete(deviceId)
-    // Build device data for createStreetlight
-    const deviceData = {
-      deviceId,
-      name: oldEntry.group.userData.deviceName || deviceId,
-      area,
-      status: oldEntry.group.userData.status
-    }
-    const s = deviceData.status != null ? deviceData.status : 2
-    const ls = getLightState(deviceData)
+    // Use fresh deviceData if provided, else construct from old userData
+    const d = deviceData || { deviceId, name: oldEntry.group.userData.deviceName || deviceId, area, status: oldEntry.group.userData.status }
+    const s = d.status != null ? d.status : 2
+    const ls = getLightState(d)
     const baseColor = STATUS_3D[s] || 0x4a5a6a
     const ringColor = RING_3D[s] || 0x4a5a6a
     const group = createStreetlight(baseColor, ringColor, s, ls)
-    // Debug: verify bulb was created correctly
-    const debugBulb = group.children.find(c => c.name === 'bulb')
-    console.log('[3D] replaceSingleDevice create:', deviceId, 'ls:', ls, 's:', s,
-      'bulb_exists:', !!debugBulb,
-      'b_emiInt:', debugBulb?.material?.emissiveIntensity,
-      'b_emiHex:', debugBulb?.material?.emissive?.getHexString?.(),
-      'ptLight:', !!group.children.find(c => c.name === 'ptLight'),
-      'groupChildren:', group.children.length)
     group.position.copy(pos)
-    group.userData = { deviceId, deviceName: deviceData.name, area, status: s, lightState: ls, _customBrightness: brightness }
+    group.userData = { deviceId, deviceName: d.name || deviceId, area, status: s, lightState: ls, _customBrightness: brightness }
     scene.add(group)
     deviceObjectMap.set(deviceId, {
       group,
@@ -952,41 +942,25 @@ function initThreeScene() {
       disk: group.children.find(c => c.name === 'lightDisk'),
       beam: group.children.find(c => c.name === 'beam'),
     })
-    // DEBUG: force bulb to extreme brightness to verify rendering
-    if (debugBulb && ls === 'on') {
-      debugBulb.material.emissive.setHex(0xffffff)
-      debugBulb.material.emissiveIntensity = 20
-      debugBulb.material.color.setHex(0xffffff)
-      debugBulb.scale.set(2, 2, 2)  // double size for visibility
-    }
 
-    // Post-creation adjustments for light state
+    // Post-creation brightness adjustments
     const newEntry = deviceObjectMap.get(deviceId)
-    if (ls === 'off' && newEntry) {
-      newEntry.base?.material && (newEntry.base.material.emissiveIntensity = 0, newEntry.base.material.opacity = 0.25)
+    if (!newEntry) return
+    if (ls === 'off') {
+      if (newEntry.base?.material) { newEntry.base.material.emissiveIntensity = 0; newEntry.base.material.opacity = 0.25 }
       if (newEntry.baseGlow) newEntry.baseGlow.material.opacity = 0
       if (newEntry.ptLight) newEntry.ptLight.intensity = 0
-    } else if (newEntry && brightness > 0 && brightness < 100) {
+    } else if (brightness != null && brightness >= 0 && brightness < 100) {
       const factor = brightness / 100
       if (newEntry.ptLight) newEntry.ptLight.intensity = 4 * factor
       if (newEntry.disk) newEntry.disk.material.opacity = 0.18 * factor
       if (newEntry.bulb) newEntry.bulb.material.emissiveIntensity = 8 * factor
     }
-    const checkEntry = deviceObjectMap.get(deviceId)
-    if (checkEntry?.bulb) {
-      console.log('[3D] replaceSingleDevice:', deviceId, 'brightness:', brightness, 'lightState:', ls,
-        'bulb.color:', '#' + checkEntry.bulb.material.color.getHexString(),
-        'bulb.emissive:', '#' + checkEntry.bulb.material.emissive.getHexString(),
-        'bulb.emissiveIntensity:', checkEntry.bulb.material.emissiveIntensity,
-        'ptLight.intensity:', checkEntry.ptLight?.intensity,
-        'group.children:', checkEntry.group.children.length)
-    } else {
-      console.log('[3D] replaceSingleDevice:', deviceId, 'brightness:', brightness, 'lightState:', ls, 'bulb: MISSING!')
-    }
-    // Force immediate render to show changes
-    if (viewMode.value === '3d') { renderer.render(scene, camera); console.log('[3D] forced render after replace') }
+    // Force immediate render
+    if (viewMode.value === '3d') renderer.render(scene, camera)
   }
   setDeviceLight3D = (deviceId, brightness) => { replaceSingleDevice(deviceId, brightness) }
+  refreshSingleDevice3D = (deviceId, brightness, deviceData) => { replaceSingleDevice(deviceId, brightness, deviceData) }
 
   // Area highlight: dim non-selected areas, boost selected area
   function applyAreaHighlight(areaName) {
@@ -1245,6 +1219,7 @@ function initThreeScene() {
     highlight3D = null
     highlightArea3D = null
     setDeviceLight3D = null
+    refreshSingleDevice3D = null
     if (highlightRing) { highlightRing.geometry.dispose(); highlightRing.material.dispose(); highlightRing = null }
     if (container.contains(renderer.domElement)) {
       container.removeChild(renderer.domElement)
@@ -1376,6 +1351,23 @@ onUnmounted(() => {
   energyChart?.dispose()
   donutChart?.dispose()
   barChart?.dispose()
+})
+
+// ═══ 跨标签页/跨组件控制同步 ═══
+const { onControlChange } = useControlSync()
+onControlChange(async (deviceId) => {
+  try {
+    const list = await fetchAllDevicesForMap()
+    const devs = Array.isArray(list) ? list : (list?.data || list?.records || [])
+    if (devs.length > 0) allDevices.value = devs
+    const freshDevice = devs.find(d => d.deviceId === deviceId)
+    if (freshDevice && refreshSingleDevice3D) {
+      const data = parseLatestData(freshDevice.latestData)
+      const bVal = data?.brightness != null ? data.brightness : 100
+      clearControlState(deviceId)
+      refreshSingleDevice3D(deviceId, bVal, freshDevice)
+    }
+  } catch (_) { /* silent */ }
 })
 
 // ═══ 视图切换 ═══
