@@ -907,10 +907,55 @@ function initThreeScene() {
       entry.baseGlow.material.opacity = isOff ? 0 : 0.6
     }
     console.log('[3D] applyDeviceBrightness:', deviceId, '→', pct + '%', 'isOff:', isOff, 'entry:', !!entry, 'bulb:', !!entry.bulb)
-    // Force render to show changes immediately
-    renderer.render(scene, camera)
   }
-  setDeviceLight3D = (deviceId, brightness) => { applyDeviceBrightness(deviceId, brightness) }
+
+  // Replace single device: destroy old → create new with correct state
+  function replaceSingleDevice(deviceId, brightness) {
+    const oldEntry = deviceObjectMap.get(deviceId)
+    if (!oldEntry) { console.warn('[3D] replaceDevice: not found:', deviceId); return }
+    const pos = oldEntry.group.position.clone()
+    const area = oldEntry.group.userData.area
+    // Dispose old
+    scene.remove(oldEntry.group)
+    oldEntry.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) { if (Array.isArray(c.material)) c.material.forEach(m => m.dispose()); else c.material.dispose() } })
+    deviceObjectMap.delete(deviceId)
+    // Build device data for createStreetlight
+    const deviceData = {
+      deviceId,
+      name: oldEntry.group.userData.deviceName || deviceId,
+      area,
+      status: oldEntry.group.userData.status
+    }
+    const s = deviceData.status != null ? deviceData.status : 2
+    const ls = getLightState(deviceData)
+    const baseColor = STATUS_3D[s] || 0x4a5a6a
+    const ringColor = RING_3D[s] || 0x4a5a6a
+    const group = createStreetlight(baseColor, ringColor, s, ls)
+    group.position.copy(pos)
+    group.userData = { deviceId, deviceName: deviceData.name, area, status: s, lightState: ls, _customBrightness: brightness }
+    scene.add(group)
+    deviceObjectMap.set(deviceId, {
+      group,
+      base: group.children.find(c => c.name === 'hexBase'),
+      baseGlow: group.children.find(c => c.name === 'baseGlow'),
+      bulb: group.children.find(c => c.name === 'bulb'),
+      ptLight: group.children.find(c => c.name === 'ptLight'),
+      disk: group.children.find(c => c.name === 'lightDisk'),
+      beam: group.children.find(c => c.name === 'beam'),
+    })
+    // Apply brightness scaling for non-off states
+    if (ls === 'on' && brightness > 0 && brightness < 100) {
+      const entry = deviceObjectMap.get(deviceId)
+      if (entry) {
+        const factor = brightness / 100
+        if (entry.ptLight) entry.ptLight.intensity = 4 * factor
+        if (entry.disk) entry.disk.material.opacity = 0.18 * factor
+        if (entry.bulb) entry.bulb.material.emissiveIntensity = 8 * factor
+      }
+    }
+    console.log('[3D] replaceSingleDevice:', deviceId, 'brightness:', brightness, 'lightState:', ls)
+  }
+  setDeviceLight3D = (deviceId, brightness) => { replaceSingleDevice(deviceId, brightness) }
 
   // Area highlight: dim non-selected areas, boost selected area
   function applyAreaHighlight(areaName) {
