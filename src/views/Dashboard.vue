@@ -931,6 +931,14 @@ function initThreeScene() {
     const baseColor = STATUS_3D[s] || 0x4a5a6a
     const ringColor = RING_3D[s] || 0x4a5a6a
     const group = createStreetlight(baseColor, ringColor, s, ls)
+    // Debug: verify bulb was created correctly
+    const debugBulb = group.children.find(c => c.name === 'bulb')
+    console.log('[3D] replaceSingleDevice create:', deviceId, 'ls:', ls, 's:', s,
+      'bulb_exists:', !!debugBulb,
+      'b_emiInt:', debugBulb?.material?.emissiveIntensity,
+      'b_emiHex:', debugBulb?.material?.emissive?.getHexString?.(),
+      'ptLight:', !!group.children.find(c => c.name === 'ptLight'),
+      'groupChildren:', group.children.length)
     group.position.copy(pos)
     group.userData = { deviceId, deviceName: deviceData.name, area, status: s, lightState: ls, _customBrightness: brightness }
     scene.add(group)
