@@ -48,6 +48,17 @@ const currentPage = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
 
+// 策略名下拉选项
+const policyNameOptions = ref([])
+async function loadPolicyNameOptions() {
+  try {
+    const res = await fetchStrategyList({ page: 1, size: 1000 })
+    const list = res?.data?.records || res?.data || []
+    const names = [...new Set((Array.isArray(list) ? list : []).map(s => s.name).filter(Boolean))]
+    policyNameOptions.value = names.sort()
+  } catch (_) { /* ignore */ }
+}
+
 async function loadData() {
   loading.value = true
   const query = {
@@ -117,7 +128,7 @@ function handleReset() {
   handleSearch()
 }
 
-onMounted(loadData)
+onMounted(() => { loadData(); loadPolicyNameOptions() })
 
 // ── 模拟测试 ────────────────────────────────────────────────────────────────
 const testVisible = ref(false)
@@ -190,7 +201,11 @@ async function remove(s) {
     <div class="search-bar">
       <ElForm :inline="true" :model="searchForm" class="search-form">
         <ElFormItem label="名称">
-          <ElInput v-model="searchForm.name" placeholder="模糊查询" clearable style="width: 140px" />
+          <el-select v-model="searchForm.name" filterable clearable allow-create
+            placeholder="输入或选择策略名" size="small" style="width: 180px"
+            popper-class="dark-popper">
+            <el-option v-for="n in policyNameOptions" :key="n" :label="n" :value="n" />
+          </el-select>
         </ElFormItem>
         <ElFormItem label="类型">
           <ElSelect v-model="searchForm.policyType" placeholder="全部" clearable style="width: 120px">

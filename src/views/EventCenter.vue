@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { fetchVisionEvents, fetchVoiceEvents } from '../api/events.js'
+import { fetchAllDevicesForMap } from '../api/devices.js'
 import { useAutoRefresh } from '../composables/useAutoRefresh.js'
 import { useMqtt } from '../composables/useMqtt.js'
 import { ElInput, ElSelect, ElOption, ElPagination, ElTag, ElMessage, ElNotification } from 'element-plus'
@@ -20,6 +21,16 @@ const pageSize = ref(20)
 const filterDeviceId = ref('')
 const filterVisionType = ref('')
 const filterVoiceType = ref('')
+const filterVoiceSource = ref('')
+
+// 设备编号下拉选项
+const deviceIdOptions = ref([])
+async function loadDeviceIdOptions() {
+  try {
+    const list = await fetchAllDevicesForMap()
+    deviceIdOptions.value = (Array.isArray(list) ? list : []).map(d => d.deviceId).filter(Boolean).sort()
+  } catch (_) { /* ignore */ }
+}
 
 async function loadVisionEvents() {
   loading.value = true
@@ -49,6 +60,7 @@ async function loadVoiceEvents() {
       size: pageSize.value,
       deviceId: filterDeviceId.value || undefined,
       type: filterVoiceType.value || undefined,
+      source: filterVoiceSource.value || undefined,
     })
     if (res && res.data) {
       voiceList.value = res.data.records || []
@@ -114,6 +126,7 @@ subscribe('streetlight/+/voice/event', (data) => {
 
 onMounted(() => {
   loadVisionEvents()
+  loadDeviceIdOptions()
   useAutoRefresh(refreshActiveTab, { interval: 300000 })
 })
 </script>
@@ -139,13 +152,18 @@ onMounted(() => {
 
     <!-- 筛选栏 -->
     <div class="filter-bar">
-      <ElInput v-model="filterDeviceId" placeholder="设备编号" clearable style="width: 180px" />
+      <el-select v-model="filterDeviceId" filterable clearable allow-create
+        placeholder="输入或选择设备编号" size="small" style="width: 220px"
+        popper-class="dark-popper">
+        <el-option v-for="id in deviceIdOptions" :key="id" :label="id" :value="id" />
+      </el-select>
       <template v-if="activeTab === 'vision'">
         <ElSelect v-model="filterVisionType" placeholder="事件类型" clearable style="width: 140px">
           <ElOption label="行人检测" value="行人检测" />
           <ElOption label="车辆通行" value="车辆通行" />
           <ElOption label="异常停车" value="异常停车" />
           <ElOption label="危险场景" value="危险场景" />
+          <ElOption label="策略联动拍照" value="策略联动拍照" />
         </ElSelect>
       </template>
       <template v-else>
@@ -153,6 +171,10 @@ onMounted(() => {
           <ElOption label="播报" value="播报" />
           <ElOption label="广播" value="广播" />
           <ElOption label="警告" value="警告" />
+        </ElSelect>
+        <ElSelect v-model="filterVoiceSource" placeholder="来源" clearable style="width: 130px">
+          <ElOption label="自动" value="自动" />
+          <ElOption label="策略联动" value="策略联动" />
         </ElSelect>
       </template>
       <button class="search-btn" @click="handleSearch"><el-icon><Search /></el-icon> 查询</button>

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, provide } from 'vue'
+import { ref, computed, onMounted, onUnmounted, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserInfo } from '../composables/useUserInfo.js'
 import { clearAuth, getMenus, saveMenus, refreshPermissionsAndMenus, getUserInfo, getPermissions, saveAuth } from '../api/auth.js'
@@ -328,6 +328,8 @@ async function refreshAlarmBadge() {
   } catch (_) { /* ignore */ }
 }
 
+let alarmPollTimer = null
+
 onMounted(async () => {
   await refreshPermissionsAndMenus()
   await loadMenus()
@@ -337,6 +339,11 @@ onMounted(async () => {
     refreshAlarmBadge()
   }
   subscribeAlarm('system/alarms', () => refreshAlarmBadge())
+  alarmPollTimer = setInterval(refreshAlarmBadge, 30000)
+})
+
+onUnmounted(() => {
+  if (alarmPollTimer) clearInterval(alarmPollTimer)
 })
 
 </script>

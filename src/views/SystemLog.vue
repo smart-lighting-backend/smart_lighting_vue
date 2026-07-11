@@ -227,7 +227,7 @@ onMounted(() => {
         >
           上一页
         </button>
-        <span class="page-num">{{ page }}</span>
+        <span class="page-num">{{ page }} / {{ Math.ceil(total / size) }}</span>
         <button
           class="page-btn"
           :disabled="page >= Math.ceil(total / size)"

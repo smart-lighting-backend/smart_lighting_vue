@@ -1,9 +1,10 @@
 <script setup>
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElSelect, ElOption } from 'element-plus'
 import { fetchAlarmPage, fetchAlarmExportList, handleAlarm, ALARM_STATUS_MAP, ALARM_LEVEL_MAP, ALARM_TYPE_MAP } from '../api/warnings.js'
-import { faultSimulate, offlineSimulate } from '../api/devices.js'
+import { invalidateCache } from '../utils/requestCache.js'
+import { faultSimulate, offlineSimulate, fetchAllDevicesForMap } from '../api/devices.js'
 import { buildAlarmCsvContent, formatAlarmTime } from '../utils/alarmExport.js'
 import { useAutoRefresh } from '../composables/useAutoRefresh.js'
 import { useUserInfo } from '../composables/useUserInfo.js'
@@ -26,6 +27,15 @@ const filters = reactive({
 })
 const currentPage = ref(1)
 const pageSize    = 10
+
+// 设备编号下拉选项
+const deviceIdOptions = ref([])
+async function loadDeviceIdOptions() {
+  try {
+    const list = await fetchAllDevicesForMap()
+    deviceIdOptions.value = (Array.isArray(list) ? list : []).map(d => d.deviceId).filter(Boolean).sort()
+  } catch (_) { /* ignore */ }
+}
 
 // 过滤选项（映射到后端枚举值）
 const typeOptions  = [
@@ -139,6 +149,7 @@ async function handleConfirm(alarm) {
   try {
     await handleAlarm(alarm.id, { handler: username.value, remark: '运维确认处理' })
     ElMessage.success(`已确认告警 #${alarm.id}`)
+    invalidateCache('dashboard:')
     loadData()
   } catch (e) {
     ElMessage.error(e?.response?.data?.message || e?.message || '确认失败')
@@ -193,6 +204,7 @@ const { subscribe } = useMqtt()
 
 onMounted(() => {
   loadData()
+  loadDeviceIdOptions()
   subscribe('system/alarms', () => loadData())
 })
 </script>
@@ -225,7 +237,11 @@ onMounted(() => {
     <div class="filter-bar">
       <div class="filter-group">
         <label>设备ID</label>
-        <input v-model="filters.deviceId" class="filter-input" placeholder="输入设备编号" />
+        <el-select v-model="filters.deviceId" filterable clearable allow-create
+          placeholder="输入或选择设备编号" size="small" style="width: 200px"
+          popper-class="dark-popper">
+          <el-option v-for="id in deviceIdOptions" :key="id" :label="id" :value="id" />
+        </el-select>
       </div>
       <div class="filter-group">
         <label>时间范围</label>
