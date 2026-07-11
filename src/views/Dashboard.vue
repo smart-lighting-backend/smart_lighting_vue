@@ -955,7 +955,17 @@ function initThreeScene() {
       if (newEntry.disk) newEntry.disk.material.opacity = 0.18 * factor
       if (newEntry.bulb) newEntry.bulb.material.emissiveIntensity = 8 * factor
     }
-    console.log('[3D] replaceSingleDevice:', deviceId, 'brightness:', brightness, 'lightState:', ls)
+    const checkEntry = deviceObjectMap.get(deviceId)
+    if (checkEntry?.bulb) {
+      console.log('[3D] replaceSingleDevice:', deviceId, 'brightness:', brightness, 'lightState:', ls,
+        'bulb.color:', '#' + checkEntry.bulb.material.color.getHexString(),
+        'bulb.emissive:', '#' + checkEntry.bulb.material.emissive.getHexString(),
+        'bulb.emissiveIntensity:', checkEntry.bulb.material.emissiveIntensity,
+        'ptLight.intensity:', checkEntry.ptLight?.intensity,
+        'group.children:', checkEntry.group.children.length)
+    } else {
+      console.log('[3D] replaceSingleDevice:', deviceId, 'brightness:', brightness, 'lightState:', ls, 'bulb: MISSING!')
+    }
   }
   setDeviceLight3D = (deviceId, brightness) => { replaceSingleDevice(deviceId, brightness) }
 
