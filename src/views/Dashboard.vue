@@ -68,7 +68,7 @@ async function handlePopupControl(action, brightness) {
     }
     ElMessage.success(action === 'ON' ? '已开灯' : action === 'OFF' ? '已关灯' : `亮度已调至 ${brightness}%`)
   } catch (e) { console.error('[popup] control error:', e) }
-  finally { controlLoading.value = false }
+  finally { setTimeout(() => { controlLoading.value = false }, 500) }
 }
 
 // ═══ 视图切换 ═══
@@ -1474,11 +1474,11 @@ watch(selectedArea, (area) => {
                 <div class="three-popup-row"><span>状态</span><span :class="'popup-status-' + popupDevice.status">{{ {0:'停用',1:'在线',2:'离线',3:'告警'}[popupDevice.status] || '未知' }}</span></div>
                 <div class="three-popup-row"><span>亮度</span><span>{{ popupDevice._brightness }}%</span></div>
                 <div class="three-popup-controls">
-                  <button class="popup-ctrl-btn on" :disabled="controlLoading" @click="handlePopupControl('ON')">开灯</button>
-                  <button class="popup-ctrl-btn off" :disabled="controlLoading" @click="handlePopupControl('OFF')">关灯</button>
+                  <button class="popup-ctrl-btn on" :disabled="controlLoading || popupDevice._brightness >= 100" @click="handlePopupControl('ON')">开灯</button>
+                  <button class="popup-ctrl-btn off" :disabled="controlLoading || popupDevice._brightness <= 0" @click="handlePopupControl('OFF')">关灯</button>
                   <input type="range" min="10" max="100" step="10" :value="popupDevice._brightness"
-                    class="popup-brightness" @input="handlePopupControl('DIMMING', Number($event.target.value))"
-                    :disabled="controlLoading" title="亮度调节" />
+                    class="popup-brightness" @change="handlePopupControl('DIMMING', Number($event.target.value))"
+                    :disabled="controlLoading || popupDevice._brightness <= 0" title="亮度调节" />
                 </div>
                 <button class="three-popup-btn" @click="goToDeviceDetail(popupDevice.deviceId)">查看详情 →</button>
               </div>
