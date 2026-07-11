@@ -943,15 +943,17 @@ function initThreeScene() {
       disk: group.children.find(c => c.name === 'lightDisk'),
       beam: group.children.find(c => c.name === 'beam'),
     })
-    // Apply brightness scaling for non-off states
-    if (ls === 'on' && brightness > 0 && brightness < 100) {
-      const entry = deviceObjectMap.get(deviceId)
-      if (entry) {
-        const factor = brightness / 100
-        if (entry.ptLight) entry.ptLight.intensity = 4 * factor
-        if (entry.disk) entry.disk.material.opacity = 0.18 * factor
-        if (entry.bulb) entry.bulb.material.emissiveIntensity = 8 * factor
-      }
+    // Post-creation adjustments for light state
+    const newEntry = deviceObjectMap.get(deviceId)
+    if (ls === 'off' && newEntry) {
+      newEntry.base?.material && (newEntry.base.material.emissiveIntensity = 0, newEntry.base.material.opacity = 0.25)
+      if (newEntry.baseGlow) newEntry.baseGlow.material.opacity = 0
+      if (newEntry.ptLight) newEntry.ptLight.intensity = 0
+    } else if (newEntry && brightness > 0 && brightness < 100) {
+      const factor = brightness / 100
+      if (newEntry.ptLight) newEntry.ptLight.intensity = 4 * factor
+      if (newEntry.disk) newEntry.disk.material.opacity = 0.18 * factor
+      if (newEntry.bulb) newEntry.bulb.material.emissiveIntensity = 8 * factor
     }
     console.log('[3D] replaceSingleDevice:', deviceId, 'brightness:', brightness, 'lightState:', ls)
   }
