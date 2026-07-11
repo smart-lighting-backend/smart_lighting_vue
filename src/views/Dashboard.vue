@@ -29,8 +29,12 @@ const hoverTooltipStyle = ref({})
 const controlLoading = ref(false)
 function showDevicePopup(device) {
   let brightness = 100
-  if (device.lightState === 'off') brightness = 0
-  else if (device.latestData) {
+  // 1) Custom brightness from 3D userData (most recent)
+  if (device._customBrightness != null) {
+    brightness = device._customBrightness
+  } else if (device.lightState === 'off') {
+    brightness = 0
+  } else if (device.latestData) {
     try {
       const ld = typeof device.latestData === 'string' ? JSON.parse(device.latestData) : device.latestData
       if (ld?.brightness != null) brightness = ld.brightness
