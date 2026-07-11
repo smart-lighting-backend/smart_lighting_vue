@@ -914,16 +914,18 @@ function initThreeScene() {
         // Restore to normal state via applyLightState
         const ls = entry.group.userData.lightState
         applyLightState(entry, ls)
-        // Re-apply custom brightness
-        if (entry.group.userData._customBrightness != null && ls === 'on') {
+        // Re-apply custom brightness (including base)
+        if (entry.group.userData._customBrightness != null) {
           const b = entry.group.userData._customBrightness
-          const factor = b / 100
-          if (entry.ptLight) entry.ptLight.intensity = 4 * factor
-          if (entry.disk) entry.disk.material.opacity = 0.18 * factor
-          if (entry.bulb) entry.bulb.material.emissiveIntensity = 8 * factor
-        } else if (entry.group.userData._customBrightness === 0) {
-          if (entry.base) { entry.base.material.emissiveIntensity = 0.02; entry.base.material.opacity = 0.35 }
-          if (entry.baseGlow) { entry.baseGlow.material.opacity = 0.02 }
+          const isOff = b === 0
+          if (entry.base) { entry.base.material.emissiveIntensity = isOff ? 0.02 : 0.8; entry.base.material.opacity = isOff ? 0.35 : 1.0 }
+          if (entry.baseGlow) { entry.baseGlow.material.opacity = isOff ? 0.02 : 0.5 }
+          if (!isOff && ls === 'on') {
+            const factor = b / 100
+            if (entry.ptLight) entry.ptLight.intensity = 4 * factor
+            if (entry.disk) entry.disk.material.opacity = 0.18 * factor
+            if (entry.bulb) entry.bulb.material.emissiveIntensity = 8 * factor
+          }
         }
       }
     })
