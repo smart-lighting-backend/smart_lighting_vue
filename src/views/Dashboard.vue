@@ -15,6 +15,7 @@ import { parseLatestData } from '../utils/manualControlState.js'
 import { getControlState, setControlState } from '../utils/controlStateStore.js'
 import { useControlSync } from '../composables/useControlSync.js'
 import DeviceMap from '../components/DeviceMap.vue'
+import BatchControlPanel from '../components/BatchControlPanel.vue'
 
 const router = useRouter()
 
@@ -81,6 +82,7 @@ async function handlePopupControl(action, brightness) {
 
 // ═══ 视图切换 ═══
 const viewMode = ref('3d')  // '3d' | 'map'
+const batchPanelRef = ref(null)    // 批量控制面板
 
 // ═══ 数据状态 ═══
 const stats = ref({})
@@ -109,6 +111,9 @@ const areaOptions = computed(() => {
   return areas.sort().map(a => ({ label: a, value: a }))
 })
 
+function openBatchPanel() {
+  batchPanelRef.value?.open()
+}
 function onAreaSelect(areaName) {
   selectedArea.value = areaName || ''
   if (areaName && viewMode.value === '3d') {
@@ -1350,20 +1355,9 @@ function initThreeScene(preloadedDevices) {
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
     raycaster.setFromCamera(mouse, camera)
 
-    // 1) Check area platforms first
-    const platMeshes = [...areaPlatformMap.values()]
-    const platIntersects = raycaster.intersectObjects(platMeshes)
-    if (platIntersects.length > 0) {
-      const areaName = platIntersects[0].object.userData?.areaName
-      if (areaName) {
-        flyToArea(areaName)
-        dismissPopup()
-        return
-      }
-    }
-
-    // 2) Check device groups
     const allGroups = [...deviceObjectMap.values()].map(e => e.group)
+
+    // 1) 优先检测设备（路灯模型有高度，点击应命中路灯而非地面）
     const intersects = raycaster.intersectObjects(allGroups, true)
     if (intersects.length > 0) {
       let obj = intersects[0].object
@@ -1375,11 +1369,24 @@ function initThreeScene(preloadedDevices) {
           highlightDeviceId.value = d.deviceId
           selectedArea.value = ''
           flyToDevice(d.deviceId)
+          return
         }
-      } else {
-        dismissPopup()
       }
     }
+
+    // 2) 未命中设备时检测区域平台（地面）
+    const platMeshes = [...areaPlatformMap.values()]
+    const platIntersects = raycaster.intersectObjects(platMeshes)
+    if (platIntersects.length > 0) {
+      const areaName = platIntersects[0].object.userData?.areaName
+      if (areaName) {
+        flyToArea(areaName)
+        dismissPopup()
+        return
+      }
+    }
+    // 点击空白处关闭弹窗
+    dismissPopup()
   }
   renderer.domElement.addEventListener('click', onClick)
 
@@ -1390,16 +1397,9 @@ function initThreeScene(preloadedDevices) {
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
     raycaster.setFromCamera(mouse, camera)
 
-    // Check area platform hover (cursor pointer)
-    const platMeshes = [...areaPlatformMap.values()]
-    const platIntersects = raycaster.intersectObjects(platMeshes)
-    if (platIntersects.length > 0) {
-      renderer.domElement.style.cursor = 'pointer'
-      hoveredDevice.value = null
-      return
-    }
-
     const allGroups = [...deviceObjectMap.values()].map(e => e.group)
+
+    // 优先检测设备悬停
     const intersects = raycaster.intersectObjects(allGroups, true)
     if (intersects.length > 0) {
       let obj = intersects[0].object
@@ -1411,6 +1411,15 @@ function initThreeScene(preloadedDevices) {
         renderer.domElement.style.cursor = 'pointer'
         return
       }
+    }
+
+    // 其次检测区域平台
+    const platMeshes = [...areaPlatformMap.values()]
+    const platIntersects = raycaster.intersectObjects(platMeshes)
+    if (platIntersects.length > 0) {
+      renderer.domElement.style.cursor = 'pointer'
+      hoveredDevice.value = null
+      return
     }
     hoveredDevice.value = null
     renderer.domElement.style.cursor = 'default'
@@ -1769,6 +1778,15 @@ watch(selectedArea, (area) => {
                 <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
               </svg>
             </button>
+            <button class="view-tab batch-btn" @click="openBatchPanel" title="批量开关灯">
+              <svg viewBox="0 0 24 24" fill="none" width="13" height="13">
+                <rect x="3" y="3" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="14" y="3" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="3" y="14" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="14" y="14" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <path d="M6.5 6.5v-2M17.5 6.5v-2M6.5 17.5v2M17.5 17.5v2" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+              </svg>
+            </button>
             <button class="view-tab immersive-btn" @click="toggleImmersive" :title="isImmersive ? '退出沉浸模式' : '沉浸模式'">
               <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
                 <path v-if="!isImmersive" d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1800,6 +1818,7 @@ watch(selectedArea, (area) => {
                 <button class="three-popup-btn" @click="goToDeviceDetail(popupDevice.deviceId)">查看详情 →</button>
               </div>
             </Transition>
+            <BatchControlPanel ref="batchPanelRef" :devices="allDevices" :applyBrightness3D="applyDeviceBrightness3D" />
           </div>
 
           <!-- 地图视图 -->
@@ -2258,6 +2277,8 @@ watch(selectedArea, (area) => {
   margin-left: 4px;
   border-left: 1px solid rgba(77,208,225,0.12);
 }
+.batch-btn:hover { color: #ffa726 !important; background: rgba(255,167,38,0.1) !important; }
+.overview-btn:hover { color: #81c784 !important; background: rgba(129,199,132,0.1) !important; }
 
 .three-container {
   width: 100%; height: 100%;
