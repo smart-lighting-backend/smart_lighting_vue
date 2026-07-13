@@ -491,9 +491,11 @@ onUnmounted(() => {
           </div>
           <div class="ui-footer">
             <button class="ui-btn-edit" type="button" @click="openEditProfile">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4 12.5-12.5z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
               编辑资料
             </button>
             <button class="ui-btn-pwd" type="button" @click="openChangePwd">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M7 10V8a5 5 0 0110 0v2M6 10h12a1 1 0 011 1v8a1 1 0 01-1 1H6a1 1 0 01-1-1v-8a1 1 0 011-1zM12 14v2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
               修改密码
             </button>
             <button class="ui-logout-btn" type="button" @click="logout">
@@ -936,6 +938,8 @@ onUnmounted(() => {
   color: #0d1b2d;
 }
 .ui-close:focus-visible,
+.ui-btn-edit:focus-visible,
+.ui-btn-pwd:focus-visible,
 .ui-logout-btn:focus-visible {
   outline: 2px solid #35c7d8;
   outline-offset: 2px;
@@ -1008,31 +1012,57 @@ onUnmounted(() => {
 }
 .ui-footer {
   padding: 0 28px 28px;
-  display: flex;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 .ui-btn-edit,
 .ui-btn-pwd {
-  flex: 1;
-  height: 38px;
+  min-width: 0;
+  height: 42px;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   border-radius: 6px;
   font-size: 13px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
-  transition: all 0.2s;
-  border: 1px solid rgba(0, 141, 230, 0.24);
-  background: rgba(0, 141, 230, 0.06);
+  transition: color 0.2s, background 0.2s, border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+  border: 1px solid rgba(0, 141, 230, 0.18);
+  box-shadow: 0 8px 18px rgba(14, 64, 95, 0.07);
+}
+.ui-btn-edit {
+  background: linear-gradient(135deg, #0f93d8, #24c4d6);
+  border-color: transparent;
+  color: #fff;
+}
+.ui-btn-pwd {
+  background: #f6fbff;
   color: #1a5276;
+}
+.ui-btn-edit svg,
+.ui-btn-pwd svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
 }
 .ui-btn-edit:hover,
 .ui-btn-pwd:hover {
-  background: rgba(0, 141, 230, 0.12);
-  border-color: rgba(0, 141, 230, 0.4);
+  transform: translateY(-1px);
+}
+.ui-btn-edit:hover {
+  box-shadow: 0 12px 24px rgba(0, 141, 230, 0.24);
+}
+.ui-btn-pwd:hover {
+  background: #eef8ff;
+  border-color: rgba(0, 141, 230, 0.36);
+  box-shadow: 0 12px 24px rgba(14, 64, 95, 0.1);
 }
 .ui-logout-btn {
-  width: 100%;
+  grid-column: 1 / -1;
   height: 46px;
   display: flex;
   align-items: center;
