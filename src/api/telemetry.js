@@ -92,6 +92,7 @@ function computeTimeRangeParams(timeRange) {
   switch (timeRange) {
     case '24h': from.setHours(from.getHours() - 24); break
     case '7d':  from.setDate(from.getDate() - 7); break
+    case '30d': from.setDate(from.getDate() - 30); break
     default:    from.setHours(from.getHours() - 1); break  // 1h
   }
   const pad = (n) => String(n).padStart(2, '0')
@@ -113,8 +114,8 @@ function formatTime(collectedAt) {
 }
 
 export function fetchTelemetryHistory(params) {
-  const { deviceId, timeRange = '1h' } = params
-  const body = { deviceId, ...computeTimeRangeParams(timeRange), page: 1, size: 500 }
+  const { deviceId, timeRange = '1h', size = 500 } = params
+  const body = { deviceId, ...computeTimeRangeParams(timeRange), page: 1, size }
   console.log('[TelemetryHistory] Request:', JSON.stringify(body))
   return safeCall(
     async () => {

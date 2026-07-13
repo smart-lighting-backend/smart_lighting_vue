@@ -1,8 +1,8 @@
-<script setup>import { ref, onMounted, onBeforeUnmount, onActivated, onDeactivated, computed, watch } from 'vue';
+<script setup>import { ref, onMounted, onBeforeUnmount, onActivated, onDeactivated, computed, watch, nextTick } from 'vue';
 
 import { useRoute, useRouter } from 'vue-router';
 import { ElButton, ElCard, ElTag, ElRadioGroup, ElRadioButton, ElRow, ElCol, ElSlider, ElTable, ElTableColumn, ElMessage, ElMessageBox } from 'element-plus';
-import { ArrowLeft, Lightning, Sunny, Moon, Refresh, Warning } from '@element-plus/icons-vue';
+import { ArrowLeft, FullScreen, Lightning, Sunny, Moon, Refresh, Warning } from '@element-plus/icons-vue';
 import { fetchDeviceHealth } from '../api/devices.js';
 import * as echarts from 'echarts';
 import PerceptionPanel from '../components/PerceptionPanel.vue';
@@ -28,6 +28,17 @@ const tempHumidityChartRef = ref(null);
 let chartInstance = null;
 let tempHumidityChartInstance = null;
 let resizeTimer = null;
+
+// ── 图表放大查看 ──
+const zoomVisible = ref(false);
+const zoomChartType = ref('illuminance'); // 'illuminance' | 'temp'
+const zoomTimeRange = ref('7d');
+const zoomLoading = ref(false);
+const zoomData = ref([]);
+const zoomChartRef1 = ref(null);
+const zoomChartRef2 = ref(null);
+let zoomChart1 = null;
+let zoomChart2 = null;
 
 // 设备详情 + 遥测 + 健康评分 每 30 秒自动刷新
 useAutoRefresh(async () => {
@@ -265,360 +276,161 @@ const initChart = () => {
  tempHumidityChartInstance = echarts.init(tempHumidityChartRef.value);
  updateTempHumidityChart();
 };
-const updateChart = () => {
- if (!chartInstance || historyData.value.length === 0)
- return;
- const option = {
+function buildIlluminanceChartOption(data, range) {
+ const rotate = range === '7d' || range === '30d' ? 0 : 45;
+ return {
  backgroundColor: 'transparent',
  title: {
  text: '光照度/PIR 历史趋势',
  left: 'center',
- textStyle: {
- fontSize: 17,
- fontWeight: 800,
- color: '#0d1b2d'
- }
+ textStyle: { fontSize: 17, fontWeight: 800, color: '#0d1b2d' }
  },
  tooltip: {
  trigger: 'axis',
- axisPointer: {
- type: 'cross',
- crossStyle: {
- color: '#606266'
- }
- },
+ axisPointer: { type: 'cross', crossStyle: { color: '#606266' } },
  backgroundColor: 'rgba(255, 255, 255, 0.96)',
  borderColor: 'rgba(0, 141, 230, 0.24)',
- textStyle: {
- color: '#1d3148'
- }
+ textStyle: { color: '#1d3148' }
  },
  legend: {
- data: ['光照度(lux)', 'PIR(有人=1)'],
- top: 30,
- textStyle: {
- color: '#31516f',
- fontSize: 13,
- fontWeight: 700
- }
+ data: ['光照度(lux)', 'PIR(有人=1)'], top: 30,
+ textStyle: { color: '#31516f', fontSize: 13, fontWeight: 700 }
  },
- grid: {
- left: '3%',
- right: '4%',
- bottom: '3%',
- top: 80,
- containLabel: true
- },
+ grid: { left: '3%', right: '4%', bottom: '3%', top: 80, containLabel: true },
  xAxis: {
  type: 'category',
- data: historyData.value.map(item => item.time),
- name: historyData.value.length > 0 ? ('\n\n\n' + historyData.value[0].time.substring(0, 4) + '年') : '',
+ data: data.map(item => item.time),
+ name: data.length > 0 ? ('\n\n\n' + data[0].time.substring(0, 4) + '年') : '',
  nameLocation: 'start',
- nameTextStyle: {
- color: '#40566f',
- fontSize: 12,
- fontWeight: 700,
- padding: [0, 5, 0, 0]
- },
+ nameTextStyle: { color: '#40566f', fontSize: 12, fontWeight: 700, padding: [0, 5, 0, 0] },
  axisLabel: {
- color: '#31516f',
- fontSize: 12,
- fontWeight: 700,
- rotate: timeRange.value === '7d' ? 0 : 45,
+ color: '#31516f', fontSize: 12, fontWeight: 700, rotate,
  formatter: function(value) {
  if (!value) return '';
  const match = value.match(/^\d{4}-(\d{2}-\d{2})/);
  return match ? match[1] : value;
  }
  },
- axisLine: {
- lineStyle: {
- color: 'rgba(0, 141, 230, 0.22)'
- }
- },
- axisTick: {
- show: false
- }
+ axisLine: { lineStyle: { color: 'rgba(0, 141, 230, 0.22)' } },
+ axisTick: { show: false }
  },
  yAxis: [
  {
- type: 'value',
- name: '光照度(lux)',
- position: 'left',
- nameTextStyle: {
- color: '#40566f',
- fontWeight: 700
- },
- axisLabel: {
- color: '#31516f',
- fontSize: 12,
- fontWeight: 700,
- formatter: '{value}'
- },
- axisLine: {
- show: true,
- lineStyle: {
- color: 'rgba(0, 141, 230, 0.22)'
- }
- },
- splitLine: {
- lineStyle: {
- color: 'rgba(16, 126, 196, 0.12)'
- }
- }
+ type: 'value', name: '光照度(lux)', position: 'left',
+ nameTextStyle: { color: '#40566f', fontWeight: 700 },
+ axisLabel: { color: '#31516f', fontSize: 12, fontWeight: 700, formatter: '{value}' },
+ axisLine: { show: true, lineStyle: { color: 'rgba(0, 141, 230, 0.22)' } },
+ splitLine: { lineStyle: { color: 'rgba(16, 126, 196, 0.12)' } }
  },
  {
- type: 'value',
- name: 'PIR',
- position: 'right',
- min: 0,
- max: 1.5,
- interval: 0.5,
- nameTextStyle: {
- color: '#40566f',
- fontWeight: 700
- },
- axisLabel: {
- color: '#31516f',
- fontSize: 12,
- fontWeight: 700,
- formatter: (value) => value === 1 ? '有人' : value === 0 ? '无人' : ''
- },
- axisLine: {
- show: true,
- lineStyle: {
- color: 'rgba(0, 141, 230, 0.22)'
- }
- },
- splitLine: {
- show: false
- }
+ type: 'value', name: 'PIR', position: 'right',
+ min: 0, max: 1.5, interval: 0.5,
+ nameTextStyle: { color: '#40566f', fontWeight: 700 },
+ axisLabel: { color: '#31516f', fontSize: 12, fontWeight: 700, formatter: (v) => v === 1 ? '有人' : v === 0 ? '无人' : '' },
+ axisLine: { show: true, lineStyle: { color: 'rgba(0, 141, 230, 0.22)' } },
+ splitLine: { show: false }
  }
  ],
  series: [
  {
- name: '光照度(lux)',
- type: 'line',
- data: historyData.value.map(item => item.illuminance),
- smooth: true,
- symbol: 'circle',
- symbolSize: 6,
- lineStyle: {
- color: '#409eff',
- width: 2
- },
- itemStyle: {
- color: '#409eff'
- },
- areaStyle: {
- color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
- { offset: 0, color: 'rgba(64, 158, 255, 0.3)' },
- { offset: 1, color: 'rgba(64, 158, 255, 0.05)' }
- ])
- }
+ name: '光照度(lux)', type: 'line', data: data.map(item => item.illuminance),
+ smooth: true, symbol: 'circle', symbolSize: 6,
+ lineStyle: { color: '#409eff', width: 2 },
+ itemStyle: { color: '#409eff' },
+ areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(64, 158, 255, 0.3)' }, { offset: 1, color: 'rgba(64, 158, 255, 0.05)' }]) }
  },
  {
- name: 'PIR(有人=1)',
- type: 'line',
- yAxisIndex: 1,
- data: historyData.value.map(item => item.pir),
- step: 'middle',
- symbol: 'circle',
- symbolSize: 6,
- lineStyle: {
- color: '#67c23a',
- width: 2
- },
- itemStyle: {
- color: '#67c23a'
- },
- areaStyle: {
- color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
- { offset: 0, color: 'rgba(103, 194, 58, 0.3)' },
- { offset: 1, color: 'rgba(103, 194, 58, 0.05)' }
- ])
- }
+ name: 'PIR(有人=1)', type: 'line', yAxisIndex: 1, data: data.map(item => item.pir),
+ step: 'middle', symbol: 'circle', symbolSize: 6,
+ lineStyle: { color: '#67c23a', width: 2 },
+ itemStyle: { color: '#67c23a' },
+ areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(103, 194, 58, 0.3)' }, { offset: 1, color: 'rgba(103, 194, 58, 0.05)' }]) }
  }
  ]
  };
- chartInstance.setOption(option, true);
+}
+
+const updateChart = () => {
+ if (!chartInstance || historyData.value.length === 0) return;
+ chartInstance.setOption(buildIlluminanceChartOption(historyData.value, timeRange.value), true);
 };
-const updateTempHumidityChart = () => {
- if (!tempHumidityChartInstance || historyData.value.length === 0)
- return;
- const option = {
+function buildTempHumidityChartOption(data, range) {
+ const rotate = range === '7d' || range === '30d' ? 0 : 45;
+ return {
  backgroundColor: 'transparent',
  title: {
  text: '温度/湿度 历史趋势',
  left: 'center',
- textStyle: {
- fontSize: 17,
- fontWeight: 800,
- color: '#0d1b2d'
- }
+ textStyle: { fontSize: 17, fontWeight: 800, color: '#0d1b2d' }
  },
  tooltip: {
  trigger: 'axis',
- axisPointer: {
- type: 'cross',
- crossStyle: {
- color: '#606266'
- }
- },
+ axisPointer: { type: 'cross', crossStyle: { color: '#606266' } },
  backgroundColor: 'rgba(255, 255, 255, 0.96)',
  borderColor: 'rgba(0, 141, 230, 0.24)',
- textStyle: {
- color: '#1d3148'
- }
+ textStyle: { color: '#1d3148' }
  },
  legend: {
- data: ['温度(°C)', '湿度(%)'],
- top: 30,
- textStyle: {
- color: '#31516f',
- fontSize: 13,
- fontWeight: 700
- }
+ data: ['温度(°C)', '湿度(%)'], top: 30,
+ textStyle: { color: '#31516f', fontSize: 13, fontWeight: 700 }
  },
- grid: {
- left: '3%',
- right: '4%',
- bottom: '3%',
- top: 80,
- containLabel: true
- },
+ grid: { left: '3%', right: '4%', bottom: '3%', top: 80, containLabel: true },
  xAxis: {
  type: 'category',
- data: historyData.value.map(item => item.time),
- name: historyData.value.length > 0 ? ('\n\n\n' + historyData.value[0].time.substring(0, 4) + '年') : '',
+ data: data.map(item => item.time),
+ name: data.length > 0 ? ('\n\n\n' + data[0].time.substring(0, 4) + '年') : '',
  nameLocation: 'start',
- nameTextStyle: {
- color: '#40566f',
- fontSize: 12,
- fontWeight: 700,
- padding: [0, 5, 0, 0]
- },
+ nameTextStyle: { color: '#40566f', fontSize: 12, fontWeight: 700, padding: [0, 5, 0, 0] },
  axisLabel: {
- color: '#31516f',
- fontSize: 12,
- fontWeight: 700,
- rotate: timeRange.value === '7d' ? 0 : 45,
+ color: '#31516f', fontSize: 12, fontWeight: 700, rotate,
  formatter: function(value) {
  if (!value) return '';
  const match = value.match(/^\d{4}-(\d{2}-\d{2})/);
  return match ? match[1] : value;
  }
  },
- axisLine: {
- lineStyle: {
- color: 'rgba(0, 141, 230, 0.22)'
- }
- },
- axisTick: {
- show: false
- }
+ axisLine: { lineStyle: { color: 'rgba(0, 141, 230, 0.22)' } },
+ axisTick: { show: false }
  },
  yAxis: [
  {
- type: 'value',
- name: '温度(°C)',
- position: 'left',
- nameTextStyle: {
- color: '#40566f',
- fontWeight: 700
- },
- axisLabel: {
- color: '#31516f',
- fontSize: 12,
- fontWeight: 700,
- formatter: '{value}'
- },
- axisLine: {
- show: true,
- lineStyle: {
- color: 'rgba(0, 141, 230, 0.22)'
- }
- },
- splitLine: {
- lineStyle: {
- color: 'rgba(16, 126, 196, 0.12)'
- }
- }
+ type: 'value', name: '温度(°C)', position: 'left',
+ nameTextStyle: { color: '#40566f', fontWeight: 700 },
+ axisLabel: { color: '#31516f', fontSize: 12, fontWeight: 700, formatter: '{value}' },
+ axisLine: { show: true, lineStyle: { color: 'rgba(0, 141, 230, 0.22)' } },
+ splitLine: { lineStyle: { color: 'rgba(16, 126, 196, 0.12)' } }
  },
  {
- type: 'value',
- name: '湿度(%)',
- position: 'right',
- min: 0,
- max: 100,
- nameTextStyle: {
- color: '#40566f',
- fontWeight: 700
- },
- axisLabel: {
- color: '#31516f',
- fontSize: 12,
- fontWeight: 700,
- formatter: '{value}%'
- },
- axisLine: {
- show: true,
- lineStyle: {
- color: 'rgba(0, 141, 230, 0.22)'
- }
- },
- splitLine: {
- show: false
- }
+ type: 'value', name: '湿度(%)', position: 'right',
+ min: 0, max: 100,
+ nameTextStyle: { color: '#40566f', fontWeight: 700 },
+ axisLabel: { color: '#31516f', fontSize: 12, fontWeight: 700, formatter: '{value}%' },
+ axisLine: { show: true, lineStyle: { color: 'rgba(0, 141, 230, 0.22)' } },
+ splitLine: { show: false }
  }
  ],
  series: [
  {
- name: '温度(°C)',
- type: 'line',
- data: historyData.value.map(item => item.temperature),
- smooth: true,
- symbol: 'circle',
- symbolSize: 6,
- lineStyle: {
- color: '#f56c6c',
- width: 2
- },
- itemStyle: {
- color: '#f56c6c'
- },
- areaStyle: {
- color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
- { offset: 0, color: 'rgba(245, 108, 108, 0.3)' },
- { offset: 1, color: 'rgba(245, 108, 108, 0.05)' }
- ])
- }
+ name: '温度(°C)', type: 'line', data: data.map(item => item.temperature),
+ smooth: true, symbol: 'circle', symbolSize: 6,
+ lineStyle: { color: '#f56c6c', width: 2 },
+ itemStyle: { color: '#f56c6c' },
+ areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(245, 108, 108, 0.3)' }, { offset: 1, color: 'rgba(245, 108, 108, 0.05)' }]) }
  },
  {
- name: '湿度(%)',
- type: 'line',
- yAxisIndex: 1,
- data: historyData.value.map(item => item.humidity),
- smooth: true,
- symbol: 'circle',
- symbolSize: 6,
- lineStyle: {
- color: '#409eff',
- width: 2
- },
- itemStyle: {
- color: '#409eff'
- },
- areaStyle: {
- color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
- { offset: 0, color: 'rgba(64, 158, 255, 0.3)' },
- { offset: 1, color: 'rgba(64, 158, 255, 0.05)' }
- ])
- }
+ name: '湿度(%)', type: 'line', yAxisIndex: 1, data: data.map(item => item.humidity),
+ smooth: true, symbol: 'circle', symbolSize: 6,
+ lineStyle: { color: '#409eff', width: 2 },
+ itemStyle: { color: '#409eff' },
+ areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(64, 158, 255, 0.3)' }, { offset: 1, color: 'rgba(64, 158, 255, 0.05)' }]) }
  }
  ]
  };
- tempHumidityChartInstance.setOption(option, true);
+}
+
+const updateTempHumidityChart = () => {
+ if (!tempHumidityChartInstance || historyData.value.length === 0) return;
+ tempHumidityChartInstance.setOption(buildTempHumidityChartOption(historyData.value, timeRange.value), true);
 };
 const handleResize = () => {
  if (resizeTimer) {
@@ -636,6 +448,63 @@ const handleResize = () => {
 const handleTimeRangeChange = () => {
  loadHistoryData();
 };
+
+// ── 图表放大查看 ──
+const zoomTimeRangeOptions = [
+ { label: '近1小时', value: '1h' },
+ { label: '近24小时', value: '24h' },
+ { label: '近7天', value: '7d' },
+ { label: '近30天', value: '30d' },
+];
+
+async function openZoom(type) {
+ zoomChartType.value = type;
+ zoomTimeRange.value = '7d';
+ zoomVisible.value = true;
+ await loadZoomData();
+ nextTick(() => initZoomCharts());
+}
+
+function closeZoom() {
+ zoomVisible.value = false;
+ if (zoomChart1) { zoomChart1.dispose(); zoomChart1 = null; }
+ if (zoomChart2) { zoomChart2.dispose(); zoomChart2 = null; }
+}
+
+async function loadZoomData() {
+ zoomLoading.value = true;
+ try {
+ const res = await fetchTelemetryHistory({
+ deviceId: deviceId.value,
+ timeRange: zoomTimeRange.value,
+ size: 5000,
+ });
+ if (res.code === 200) {
+ zoomData.value = res.data.list;
+ }
+ } catch {}
+ zoomLoading.value = false;
+}
+
+async function handleZoomTimeRangeChange() {
+ await loadZoomData();
+ if (zoomChart1) zoomChart1.setOption(buildIlluminanceChartOption(zoomData.value, zoomTimeRange.value), true);
+ if (zoomChart2) zoomChart2.setOption(buildTempHumidityChartOption(zoomData.value, zoomTimeRange.value), true);
+}
+
+function initZoomCharts() {
+ if (zoomChartRef1.value) {
+ if (zoomChart1) zoomChart1.dispose();
+ zoomChart1 = echarts.init(zoomChartRef1.value);
+ zoomChart1.setOption(buildIlluminanceChartOption(zoomData.value, zoomTimeRange.value), true);
+ }
+ if (zoomChartRef2.value) {
+ if (zoomChart2) zoomChart2.dispose();
+ zoomChart2 = echarts.init(zoomChartRef2.value);
+ zoomChart2.setOption(buildTempHumidityChartOption(zoomData.value, zoomTimeRange.value), true);
+ }
+}
+
 const handleControlCommand = async (command) => {
  if (!deviceInfo.value) {
  return;
@@ -736,6 +605,8 @@ onBeforeUnmount(() => {
  tempHumidityChartInstance.dispose();
  tempHumidityChartInstance = null;
  }
+ if (zoomChart1) { zoomChart1.dispose(); zoomChart1 = null; }
+ if (zoomChart2) { zoomChart2.dispose(); zoomChart2 = null; }
 });
 
 // ───────────── 设备凭证 ─────────────
@@ -999,16 +870,39 @@ async function showCredentials() {
 
       <ElRow :gutter="20" class="chart-row">
         <ElCol :span="12" class="chart-col">
-          <ElCard class="chart-card">
+          <ElCard class="chart-card chart-card-expandable">
+            <FullScreen class="chart-expand-icon" @click.stop="openZoom('illuminance')" />
             <div ref="chartRef" class="chart-container"></div>
           </ElCard>
         </ElCol>
         <ElCol :span="12" class="chart-col">
-          <ElCard class="chart-card">
+          <ElCard class="chart-card chart-card-expandable">
+            <FullScreen class="chart-expand-icon" @click.stop="openZoom('temp')" />
             <div ref="tempHumidityChartRef" class="chart-container"></div>
           </ElCard>
         </ElCol>
       </ElRow>
+
+      <!-- ═══════ 图表放大弹层 ═══════ -->
+      <Teleport to="body">
+        <div v-if="zoomVisible" class="zoom-overlay" @click.self="closeZoom">
+          <div class="zoom-dialog">
+            <div class="zoom-header">
+              <h3>{{ zoomChartType === 'illuminance' ? '光照度 / PIR' : '温度 / 湿度' }} — 历史趋势</h3>
+              <ElRadioGroup v-model="zoomTimeRange" @change="handleZoomTimeRangeChange" class="zoom-timerange">
+                <ElRadioButton v-for="o in zoomTimeRangeOptions" :key="o.value" :label="o.value">{{ o.label }}</ElRadioButton>
+              </ElRadioGroup>
+              <span v-if="zoomLoading" class="zoom-loading-hint">加载中...</span>
+              <span v-else class="zoom-count-hint">{{ zoomData.length }} 条数据</span>
+              <button class="zoom-close-btn" @click="closeZoom">&times;</button>
+            </div>
+            <div class="zoom-body">
+              <div ref="zoomChartRef1" class="zoom-chart"></div>
+              <div ref="zoomChartRef2" class="zoom-chart"></div>
+            </div>
+          </div>
+        </div>
+      </Teleport>
 
       <!-- ========== 远程控制面板 ========== -->
       <template v-if="hasPerm('device:control')">
@@ -2965,5 +2859,130 @@ button.ctrl-btn {
   color: #f0a020;
   font-size: 12px;
   text-align: center;
+}
+
+/* ──────── 图表放大弹层 ──────── */
+.chart-card-expandable {
+  position: relative;
+  cursor: pointer;
+}
+.chart-expand-icon {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 10;
+  width: 18px;
+  height: 18px;
+  color: #a0b4cc;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.2s, color 0.2s;
+}
+.chart-card-expandable:hover .chart-expand-icon {
+  opacity: 1;
+  color: #409eff;
+}
+
+.zoom-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(13, 27, 45, 0.52);
+  backdrop-filter: blur(10px);
+}
+.zoom-dialog {
+  width: min(92vw, 1200px);
+  height: min(90vh, 780px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid rgba(0, 141, 230, 0.18);
+  border-radius: 10px;
+  box-shadow: 0 26px 70px rgba(14, 70, 120, 0.24);
+}
+.zoom-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 18px;
+  border-bottom: 1px solid rgba(0, 141, 230, 0.14);
+  background: linear-gradient(180deg, #eef8ff, #ffffff);
+}
+.zoom-header h3 {
+  margin: 0;
+  color: #0d1b2d;
+  font-size: 15px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.zoom-timerange {
+  flex-shrink: 0;
+}
+.zoom-count-hint,
+.zoom-loading-hint {
+  margin-left: auto;
+  color: #40566f;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.zoom-loading-hint {
+  color: #409eff;
+}
+.zoom-close-btn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(0, 141, 230, 0.16);
+  border-radius: 7px;
+  color: #40566f;
+  background: rgba(255, 255, 255, 0.76);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.zoom-close-btn:hover {
+  color: #006fc2;
+  border-color: rgba(0, 141, 230, 0.34);
+  background: #ffffff;
+}
+.zoom-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.zoom-chart {
+  flex: 1 1 0;
+  min-height: 260px;
+}
+
+@media (max-width: 860px) {
+  .zoom-overlay {
+    padding: 12px;
+  }
+  .zoom-dialog {
+    width: calc(100vw - 24px);
+    height: calc(100vh - 24px);
+  }
+  .zoom-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .zoom-body {
+    padding: 10px;
+    gap: 10px;
+  }
+  .zoom-chart {
+    min-height: 200px;
+  }
 }
 </style>

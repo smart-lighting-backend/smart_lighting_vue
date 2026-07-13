@@ -368,7 +368,10 @@ function addMarkers(AMap) {
     marker.setMap(map)
   })
 
-  if (markerMap.size > 0) {
+  // 如果有分区选中，重新应用分区高亮和视野；否则恢复全局视野
+  if (localArea.value) {
+    selectArea(localArea.value)
+  } else if (markerMap.size > 0) {
     map.setFitView(Array.from(markerMap.values()))
   }
 }
