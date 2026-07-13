@@ -96,6 +96,9 @@ const createRules = {
   status: [{ required: true, message: '请选择设备状态', trigger: 'change' }],
   longitude: makeCoordRule('经度'),
   latitude: makeCoordRule('纬度'),
+  factorySerial: [
+    { max: 30, message: '出厂编号不能超过30个字符', trigger: 'blur' },
+  ],
 }
 
 function openLocationPicker() {
@@ -1131,7 +1134,7 @@ async function batchDeleteSelected() {
           <ElInput
             v-model.trim="createForm.factorySerial"
             placeholder="设备出厂编号（用于生成 MQTT 鉴权凭证）"
-            maxlength="100"
+            maxlength="30"
             show-word-limit
           />
         </ElFormItem>

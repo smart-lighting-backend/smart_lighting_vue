@@ -112,6 +112,8 @@ export function validateDeviceRow(row, existingDeviceIds = new Set()) {
 
   if (!row.factorySerial || !String(row.factorySerial).trim()) {
     errors.push('出厂编号不能为空')
+  } else if (String(row.factorySerial).trim().length > 30) {
+    errors.push('出厂编号不能超过30个字符')
   }
 
   return { valid: errors.length === 0, errors }
