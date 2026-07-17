@@ -30,8 +30,8 @@ function broadcastControlState(deviceId, action, brightness) {
 }
 
 // ── 常量定义 ─────────────────────────────────────────────────────────────
-const ACTION_MAP = { turn_on: 'ON', turn_off: 'OFF', dim: 'DIMMING' }
-const REVERSE_ACTION_MAP = { ON: 'turn_on', OFF: 'turn_off', DIMMING: 'dim' }
+const ACTION_MAP = { turn_on: 'ON', turn_off: 'OFF', dim: 'DIMMING', restart: 'RESTART' }
+const REVERSE_ACTION_MAP = { ON: 'turn_on', OFF: 'turn_off', DIMMING: 'dim', RESTART: 'restart' }
 const COMMAND_LABELS = {
   turn_on: '开灯', turn_off: '关灯', dim: '调光', flash: '闪烁', restart: '重启',
 }
@@ -126,8 +126,8 @@ async function safeCall(apiFn, mockData, endpoint) {
 
 // ── 发送控制指令 ────────────────────────────────────────────────────────
 export async function sendControlCommand(deviceId, command, params = {}) {
-  // flash / restart 后端不支持，走纯 Mock
-  if (command === 'flash' || command === 'restart') {
+  // flash 后端不支持，走纯 Mock
+  if (command === 'flash') {
     const result = buildMockResponse(deviceId, command, params)
     // flash/restart 不影响灯光状态，跳过 controlStateStore 更新
     MOCK_HISTORY.unshift({

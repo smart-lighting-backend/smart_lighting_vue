@@ -4,6 +4,10 @@ function pad2(value) {
   return String(value).padStart(2, '0')
 }
 
+/**
+ * 格式化日期为本地时间。
+ * 输入为 UTC 时区时间戳（毫秒），JavaScript Date 自动转为本地时区显示。
+ */
 function formatDate(date) {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
     return '--'

@@ -54,11 +54,16 @@ useAutoRefresh(async () => {
     }
     if (res2.code === 200) {
       latestTelemetry.value = res2.data
+      const raw2 = typeof res2.data === 'string' ? (parseLatestData(res2.data) || {}) : (res2.data || {});
+      if (raw2.led_status === 'ON' || raw2.led_status === 'OFF') {
+        lightStatus.value = raw2.led_status === 'ON';
+        if (raw2.brightness != null) brightness.value = Number(raw2.brightness);
+      }
     }
     const hRes = await fetchDeviceHealth(deviceId.value)
     if (hRes?.data) healthDetail.value = hRes.data
   } catch {}
-}, { interval: 30000 })
+}, { interval: 5000 })  /* 硬件 1.5s 上报, 5s 刷新足够实时 */
 const MANUAL_CONTROL_STATE_EVENT = 'manual-control-state-change';
 
 
@@ -250,6 +255,12 @@ const loadLatestTelemetry = async () => {
  const res = await fetchLatestTelemetry(deviceId.value);
  if (res.code === 200) {
  latestTelemetry.value = res.data;
+ // 从遥测同步真实灯状态 (边缘决策/远程控制都会反映在 hardware telemetry 中)
+ const raw = typeof res.data === 'string' ? (parseLatestData(res.data) || {}) : (res.data || {});
+ if (raw.led_status === 'ON' || raw.led_status === 'OFF') {
+   lightStatus.value = raw.led_status === 'ON';
+   if (raw.brightness != null) brightness.value = Number(raw.brightness);
+ }
  }
  loading.value = false;
 };
