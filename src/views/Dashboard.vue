@@ -578,13 +578,18 @@ function initThreeScene(preloadedDevices) {
     if (cached && (Date.now() - cached.time < 120000)) {
       return (cached.action === 'OFF' || cached.brightness === 0) ? 'off' : 'on'
     }
-    // 1) latestData.action (from API — the authoritative source)
+    // 1) latestData (from API — the authoritative source)
     const data = parseLatestData(device.latestData)
+    // 1a) action 字段存在时以 action 为准 (策略引擎/远程控制写入)
     if (data?.action) {
       if (data.action === 'OFF' || data.brightness === 0) return 'off'
       return 'on'
     }
-    // 2) Illuminance guess
+    // 1b) 无 action 时以 brightness 为准 (硬件按键操作/设备端遥测)
+    if (data?.brightness != null) {
+      return data.brightness > 0 ? 'on' : 'off'
+    }
+    // 2) Illuminance guess (无遥测数据时的兜底)
     if (data?.illuminance != null) {
       return data.illuminance > 80 ? 'on' : 'off'
     }
@@ -1561,7 +1566,7 @@ function stopTrendPolling() {
   if (trendTimer) { clearInterval(trendTimer); trendTimer = null }
 }
 
-const devicePoller = useAutoRefresh(pollDeviceStatus, { interval: 15000, immediateFirst: false })
+const devicePoller = useAutoRefresh(pollDeviceStatus, { interval: 5000, immediateFirst: false })
 
 onActivated(() => {
   handleAllChartResize()

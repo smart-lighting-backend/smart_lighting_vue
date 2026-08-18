@@ -101,26 +101,20 @@ function computeTimeRangeParams(timeRange) {
 }
 
 /**
- * 格式化时间戳为本地时间显示。
- * 后端和 EMQX 统一使用 UTC 时间（ZoneOffset.UTC / now_rfc3339），
- * 前端显示时转换为用户本地时区（北京时间 UTC+8）。
+ * 格式化时间戳显示。
+ * 后端 TelemetryDao 已将 TDengine 的 UTC 转为北京时间，
+ * 前端直接展示即可，无需再次转换时区。
  */
 function formatTime(collectedAt) {
   if (!collectedAt) return '--'
-  // 数组格式（MySQL datetime，原样为 UTC）: [2026, 7, 8, 15, 30, 0]
+  // 数组格式（MySQL datetime，已是北京时间）: [2026, 7, 20, 23, 0, 0]
   if (Array.isArray(collectedAt) && collectedAt.length >= 6) {
     const [y, m, d, h, min, s] = collectedAt
-    // 构造 UTC 时间 → 转换为本地时区
-    const utcDate = new Date(Date.UTC(y, m - 1, d, h, min, s))
-    const l = utcDate.toLocaleString('zh-CN', { hour12: false })
-    return l
+    const pad = (n) => String(n).padStart(2, '0')
+    return `${y}-${pad(m)}-${pad(d)} ${pad(h)}:${pad(min)}:${pad(s)}`
   }
-  // 字符串格式（TDengine / Jackson LocalDateTime），存储为 UTC
-  const raw = String(collectedAt).replace('T', ' ').substring(0, 19)
-  // 以 UTC 解析 → 转换为本地时区显示
-  const utc = new Date(raw + 'Z')  // 加 Z 标记为 UTC
-  if (isNaN(utc.getTime())) return raw  // 解析失败则原样返回
-  return utc.toLocaleString('zh-CN', { hour12: false })
+  // 字符串格式（TDengine 经后端转北京时间）
+  return String(collectedAt).replace('T', ' ').substring(0, 19) || '--'
 }
 
 export function fetchTelemetryHistory(params) {

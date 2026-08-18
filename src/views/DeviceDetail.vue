@@ -12,7 +12,7 @@ import { sendControlCommand, getControlHistory } from '../api/control.js';
 import { useUserInfo } from '../composables/useUserInfo.js';
 import { useAutoRefresh } from '../composables/useAutoRefresh.js';
 import { useMqtt } from '../composables/useMqtt.js';
-import { parseLatestData, resolveManualControlState } from '../utils/manualControlState.js';
+import { parseLatestData, stateFromLatestData } from '../utils/manualControlState.js';
 const { hasPerm } = useUserInfo();
 const route = useRoute();
 const router = useRouter();
@@ -54,11 +54,8 @@ useAutoRefresh(async () => {
     }
     if (res2.code === 200) {
       latestTelemetry.value = res2.data
-      const raw2 = typeof res2.data === 'string' ? (parseLatestData(res2.data) || {}) : (res2.data || {});
-      if (raw2.led_status === 'ON' || raw2.led_status === 'OFF') {
-        lightStatus.value = raw2.led_status === 'ON';
-        if (raw2.brightness != null) brightness.value = Number(raw2.brightness);
-      }
+      // 不在此处覆盖 lightStatus —— 已由 applyDeviceControlState 统一处理,
+      // 避免遥测时序延迟导致手动模式的正确状态被覆盖
     }
     const hRes = await fetchDeviceHealth(deviceId.value)
     if (hRes?.data) healthDetail.value = hRes.data
@@ -120,15 +117,8 @@ const formatTime = (date) => {
     const [y, m, d, h = 0, mi = 0, s = 0] = date;
     return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')} ${String(h).padStart(2,'0')}:${String(mi).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
   }
-  const dObj = new Date(date);
-  if (isNaN(dObj.getTime())) return String(date);
-  return dObj.toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  });
+  /* 后端已转北京时间, 直接展示字符串, 避免 new Date() 时区歧义 */
+  return String(date).replace('T', ' ').substring(0, 19) || '--';
 };
 
 const formatDateOnly = (dateRaw) => {
@@ -178,6 +168,7 @@ const mapDeviceInfo = (raw) => {
     latestData: raw.latestData,
     manualMode: raw.manualMode || false,
     manualExpireAt: raw.manualExpireAt || null,
+    source: raw.source || 'SIMULATED',
   }
 }
 
@@ -202,8 +193,12 @@ async function fetchLatestControlRecord() {
 }
 
 async function applyDeviceControlState(device) {
-  const latestRecord = await fetchLatestControlRecord()
-  applyResolvedControlState(resolveManualControlState(device, latestRecord, 80))
+  // 统一使用 latestData 中的 brightness 判断开关状态
+  // latestData 由后端 MqttSubscriber.mergeLatestData 维护:
+  //   - AUTO 模式保留策略引擎控制元数据 (action/brightness由DecisionEngine写入)
+  //   - MANUAL 模式保留遥测真实值 (设备端按键或远程手动操作)
+  const state = stateFromLatestData(device?.latestData, 80)
+  applyResolvedControlState(state || { power: false, brightness: 0 })
 }
 
 function handleManualControlStateChange(event) {
@@ -255,12 +250,6 @@ const loadLatestTelemetry = async () => {
  const res = await fetchLatestTelemetry(deviceId.value);
  if (res.code === 200) {
  latestTelemetry.value = res.data;
- // 从遥测同步真实灯状态 (边缘决策/远程控制都会反映在 hardware telemetry 中)
- const raw = typeof res.data === 'string' ? (parseLatestData(res.data) || {}) : (res.data || {});
- if (raw.led_status === 'ON' || raw.led_status === 'OFF') {
-   lightStatus.value = raw.led_status === 'ON';
-   if (raw.brightness != null) brightness.value = Number(raw.brightness);
- }
  }
  loading.value = false;
 };
@@ -677,6 +666,50 @@ async function showCredentials() {
     credentialsLoading.value = false
   }
 }
+
+/* ── WiFi 远程配置 (仅真实硬件设备) ── */
+const wifiForm = ref({ ssid: '', password: '' })
+const wifiSubmitting = ref(false)
+
+async function submitWifiConfig() {
+  if (!wifiForm.value.ssid.trim()) {
+    ElMessage.warning('请输入 WiFi 名称')
+    return
+  }
+  if (!wifiForm.value.password.trim()) {
+    ElMessage.warning('请输入 WiFi 密码')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      '修改后设备将进入等待重启模式，灯光和遥测暂停。请确保能到设备现场按 RESET 键重启。10 分钟内未重启将自动恢复旧配置。',
+      '确认修改 WiFi 配置',
+      { confirmButtonText: '确认下发', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return // 用户取消
+  }
+
+  wifiSubmitting.value = true
+  try {
+    const { default: http } = await import('../api/request.js')
+    const res = await http.put(`/api/devices/${deviceId.value}/wifi-config`, {
+      wifiSsid: wifiForm.value.ssid.trim(),
+      wifiPassword: wifiForm.value.password
+    })
+    if (res.code === 200) {
+      ElMessage.success(res.message || 'WiFi 配置已下发')
+      wifiForm.value = { ssid: '', password: '' }
+    } else {
+      ElMessage.error(res.message || '配置下发失败')
+    }
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || e.message || '请求失败')
+  } finally {
+    wifiSubmitting.value = false
+  }
+}
 </script>
 
 <template>
@@ -745,6 +778,28 @@ async function showCredentials() {
             </div>
           </div>
         </div>
+      </ElCard>
+
+      <!-- WiFi 配置（仅真实硬件设备） -->
+      <ElCard v-if="deviceInfo?.source === 'REAL'" class="wifi-config-card">
+        <div class="card-header">
+          <h3>WiFi 配置</h3>
+          <span class="update-time">修改后需至设备现场按 RESET 键重启</span>
+        </div>
+        <el-form :model="wifiForm" label-width="80px" size="default" @submit.prevent>
+          <el-form-item label="WiFi 名称">
+            <el-input v-model="wifiForm.ssid" placeholder="请输入新 WiFi 名称" />
+          </el-form-item>
+          <el-form-item label="WiFi 密码">
+            <el-input v-model="wifiForm.password" type="password" show-password placeholder="请输入新 WiFi 密码" />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="warning" @click="submitWifiConfig" :loading="wifiSubmitting">
+              应用配置
+            </el-button>
+            <span class="wifi-hint">配置下发后设备将进入等待重启模式，10 分钟内未重启将自动恢复旧配置。</span>
+          </el-form-item>
+        </el-form>
       </ElCard>
 
       <!-- 健康评分详情 -->
@@ -2995,5 +3050,14 @@ button.ctrl-btn {
   .zoom-chart {
     min-height: 200px;
   }
+}
+
+.wifi-config-card {
+  margin-bottom: 16px;
+}
+.wifi-hint {
+  margin-left: 12px;
+  font-size: 12px;
+  color: #909399;
 }
 </style>
